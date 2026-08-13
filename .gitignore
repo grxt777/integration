@@ -4,11 +4,15 @@ __pycache__/
 *.pyo
 .env
 .DS_Store
-*.db
-data/
 .pytest_cache/
 .venv/
 venv/
+
+# База данных SQLite
+data/
+*.db
+*.db-wal
+*.db-shm
 
 # Локальные ключи агента
 .arena-keys/

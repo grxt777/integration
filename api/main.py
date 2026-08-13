@@ -2,7 +2,7 @@
 Bank Intelligence Platform — FastAPI Backend
 =============================================
 
-Объединяет два продукта в одном приложении и одной базе PostgreSQL:
+Объединяет два продукта в одном приложении и одной базе SQLite:
 
   ATM Monitor (реестр банкоматов, остатки, инкассация)
     GET   /api/atms                         → список ATM из БД
@@ -95,11 +95,11 @@ log = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    log.info("Инициализация БД Bank Intelligence Platform...")
+    log.info("Инициализация БД Bank Intelligence Platform (SQLite)...")
     try:
         init_db()
     except DatabaseUnavailableError as e:
-        # Показываем понятную инструкцию вместо многоэтажного traceback psycopg2
+        # Показываем понятную инструкцию вместо сырого traceback драйвера БД
         # и глушим вывод стектрейса Starlette — он здесь ничего не добавляет.
         print(str(e), file=sys.stderr, flush=True)
         logging.getLogger("uvicorn.error").setLevel(logging.CRITICAL)

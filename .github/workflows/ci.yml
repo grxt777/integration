@@ -9,28 +9,6 @@ jobs:
   test:
     runs-on: ubuntu-latest
 
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: bank
-          POSTGRES_PASSWORD: bank
-          POSTGRES_DB: bank_db
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U bank -d bank_db"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 5
-
-    env:
-      POSTGRES_HOST: localhost
-      POSTGRES_PORT: 5432
-      POSTGRES_USER: bank
-      POSTGRES_PASSWORD: bank
-      POSTGRES_DB: bank_db
-
     steps:
       - uses: actions/checkout@v4
 

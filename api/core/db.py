@@ -1,146 +1,181 @@
 """
-Единый слой доступа к PostgreSQL для Bank Intelligence Platform.
+Единый слой доступа к SQLite для Bank Intelligence Platform.
 
-Объединяет два домена в одной базе:
-  * atms / branches         — реестр банкоматов и филиалов (портировано с SQLite)
-  * cashier_* таблицы       — аналитика кассиров (см. core/cashier/repository.py)
+База — обычный файл `data/bank.db`, никаких серверов и внешних зависимостей.
+
+Содержит два домена:
+  * atms / branches   — реестр банкоматов и филиалов
+  * cashier_*         — аналитика кассиров (см. core/cashier/repository.py)
+
+Модуль кассиров исторически написан под PostgreSQL, поэтому здесь есть
+небольшой слой совместимости: он переводит запросы (`%s`, `SERIAL`,
+`TRUNCATE`, `RETURNING id`, `ADD COLUMN IF NOT EXISTS`, `now()`) в диалект
+SQLite. Благодаря этому бизнес-логика кассиров остаётся без изменений.
 """
 
 from __future__ import annotations
 
 import logging
+import re
+import sqlite3
+import threading
 from contextlib import contextmanager
 from typing import Any, Dict, Iterator, List, Optional
 
-import psycopg2
-import psycopg2.extras
-import psycopg2.pool
-
 from .config import (
-    DATABASE_URL,
-    POSTGRES_HOST,
-    POSTGRES_PORT,
-    POSTGRES_USER,
+    DB_PATH,
+    DATA_DIR,
     DEFAULT_CAPACITY,
     LOW_CASH_PCT,
-    POSTGRES_ADMIN_URL,
-    POSTGRES_DB,
     WARNING_CASH_PCT,
 )
 
 log = logging.getLogger(__name__)
 
-_pool: psycopg2.pool.ThreadedConnectionPool | None = None
+_write_lock = threading.Lock()
 
 
 class DatabaseUnavailableError(RuntimeError):
-    """PostgreSQL недоступен или доступ не настроен — с инструкцией для пользователя."""
+    """Не удалось открыть файл базы данных."""
 
 
-def _connection_help(error: Exception) -> str:
-    """Формирует понятное сообщение вместо сырого traceback psycopg2."""
-    text = str(error)
-
-    if "could not connect" in text or "Connection refused" in text or "не удалось" in text.lower():
-        reason = (
-            f"PostgreSQL не отвечает на {POSTGRES_HOST}:{POSTGRES_PORT} — похоже, сервер не запущен.\n\n"
-            "  Как запустить:\n"
-            "    macOS (Homebrew):  brew services start postgresql@16\n"
-            "    Linux (systemd):   sudo systemctl start postgresql\n"
-            "    Docker (всё сразу): docker compose up\n\n"
-            "  Если PostgreSQL ещё не установлен:\n"
-            "    macOS:  brew install postgresql@16 && brew services start postgresql@16\n"
-        )
-    elif "password authentication failed" in text or "authentication" in text:
-        reason = (
-            f"Неверный логин или пароль для пользователя '{POSTGRES_USER}'.\n\n"
-            "  Создайте роль и базу одной командой:\n"
-            "    ./scripts/setup-postgres.sh\n\n"
-            "  Либо поправьте доступы в файле .env\n"
-        )
-    elif "does not exist" in text and "role" in text:
-        reason = (
-            f"Роль '{POSTGRES_USER}' не существует в PostgreSQL.\n\n"
-            "  Создайте роль и базу одной командой:\n"
-            "    ./scripts/setup-postgres.sh\n"
-        )
-    else:
-        reason = (
-            "Не удалось подключиться к PostgreSQL.\n\n"
-            "  Проверьте, что сервер запущен, и настройте доступ:\n"
-            "    ./scripts/setup-postgres.sh\n"
-        )
-
-    return (
-        "\n"
-        "═══════════════════════════════════════════════════════════\n"
-        " ❌ НЕТ ПОДКЛЮЧЕНИЯ К БАЗЕ ДАННЫХ\n"
-        "═══════════════════════════════════════════════════════════\n\n"
-        f"{reason}\n"
-        "  Текущие настройки (из .env или значения по умолчанию):\n"
-        f"    POSTGRES_HOST={POSTGRES_HOST}\n"
-        f"    POSTGRES_PORT={POSTGRES_PORT}\n"
-        f"    POSTGRES_DB={POSTGRES_DB}\n"
-        f"    POSTGRES_USER={POSTGRES_USER}\n\n"
-        f"  Исходная ошибка: {text.strip().splitlines()[0] if text.strip() else error}\n"
-        "═══════════════════════════════════════════════════════════"
-    )
-
-
-def _ensure_database_exists() -> None:
-    """Создаёт базу данных приложения, если её ещё нет."""
-    try:
-        conn = psycopg2.connect(POSTGRES_ADMIN_URL)
-    except psycopg2.OperationalError as e:
-        raise DatabaseUnavailableError(_connection_help(e)) from None
-
-    try:
-        conn.autocommit = True
-        cur = conn.cursor()
-        cur.execute("SELECT 1 FROM pg_database WHERE datname = %s", (POSTGRES_DB,))
-        if not cur.fetchone():
-            # UTF8 обязателен: реестры содержат кириллицу и узбекскую латиницу.
-            cur.execute(f"CREATE DATABASE {POSTGRES_DB} ENCODING 'UTF8' TEMPLATE template0")
-            log.info("Создана база данных PostgreSQL: %s", POSTGRES_DB)
-        cur.close()
-    except psycopg2.Error as e:
-        raise DatabaseUnavailableError(_connection_help(e)) from None
-    finally:
-        conn.close()
-
-
-def _get_pool() -> psycopg2.pool.ThreadedConnectionPool:
-    global _pool
-    if _pool is None:
-        _ensure_database_exists()
-        try:
-            _pool = psycopg2.pool.ThreadedConnectionPool(minconn=1, maxconn=10, dsn=DATABASE_URL)
-        except psycopg2.OperationalError as e:
-            raise DatabaseUnavailableError(_connection_help(e)) from None
-        log.info("Пул соединений PostgreSQL инициализирован.")
-    return _pool
-
+# ═══════════════════════════════════════════════════════════
+# ПОДКЛЮЧЕНИЕ
+# ═══════════════════════════════════════════════════════════
 
 @contextmanager
-def _connect() -> Iterator[psycopg2.extensions.connection]:
-    """Контекстный менеджер: выдаёт соединение из пула с транзакцией."""
-    pool = _get_pool()
-    conn = pool.getconn()
+def _connect() -> Iterator[sqlite3.Connection]:
+    """Контекстный менеджер: соединение с SQLite и транзакция."""
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
     try:
-        conn.set_client_encoding("UTF8")
-        conn.autocommit = False
-        yield conn
-        conn.commit()
+        conn = sqlite3.connect(str(DB_PATH), timeout=30, check_same_thread=False)
+    except sqlite3.Error as e:
+        raise DatabaseUnavailableError(
+            f"\n❌ Не удалось открыть базу данных {DB_PATH}\n   Причина: {e}\n"
+        ) from None
+
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA journal_mode = WAL")   # параллельное чтение при записи
+
+    # Встроенные LOWER/UPPER в SQLite работают только с латиницей: 'КАССИР'
+    # остался бы в верхнем регистре, и фильтры по должности/филиалу на кириллице
+    # не находили бы записи. Подменяем их Python-версиями с поддержкой Unicode.
+    conn.create_function("lower", 1, lambda s: s.lower() if isinstance(s, str) else s)
+    conn.create_function("upper", 1, lambda s: s.upper() if isinstance(s, str) else s)
+
+    try:
+        with _write_lock:
+            yield conn
+            conn.commit()
     except Exception:
         conn.rollback()
         raise
     finally:
-        pool.putconn(conn)
+        conn.close()
 
 
-def dict_cursor(conn: psycopg2.extensions.connection) -> psycopg2.extras.RealDictCursor:
-    """Курсор, возвращающий строки как словари."""
-    return conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+# ═══════════════════════════════════════════════════════════
+# СЛОЙ СОВМЕСТИМОСТИ С POSTGRESQL (для модуля кассиров)
+# ═══════════════════════════════════════════════════════════
+
+_TRUNCATE_RE = re.compile(
+    r"^\s*TRUNCATE\s+TABLE\s+(?P<tables>[\w\s,]+?)(\s+RESTART\s+IDENTITY)?(\s+CASCADE)?\s*$",
+    re.IGNORECASE,
+)
+_ADD_COLUMN_RE = re.compile(
+    r"^\s*ALTER\s+TABLE\s+(?P<table>\w+)\s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+(?P<column>\w+)\s+(?P<definition>.+?)\s*$",
+    re.IGNORECASE | re.DOTALL,
+)
+_RETURNING_RE = re.compile(r"\s+RETURNING\s+id\s*$", re.IGNORECASE)
+
+
+def _translate_sql(sql: str) -> str:
+    """Переводит PostgreSQL-синтаксис в понятный SQLite."""
+    sql = sql.replace("%s", "?")
+    sql = re.sub(r"\bSERIAL\s+PRIMARY\s+KEY\b", "INTEGER PRIMARY KEY AUTOINCREMENT", sql, flags=re.I)
+    sql = re.sub(r"\bBIGSERIAL\s+PRIMARY\s+KEY\b", "INTEGER PRIMARY KEY AUTOINCREMENT", sql, flags=re.I)
+    sql = re.sub(r"\bTIMESTAMPTZ\b", "TEXT", sql, flags=re.I)
+    sql = re.sub(r"\bDOUBLE\s+PRECISION\b", "REAL", sql, flags=re.I)
+    sql = re.sub(r"\bBIGINT\b", "INTEGER", sql, flags=re.I)
+    sql = re.sub(r"\bnow\(\)", "CURRENT_TIMESTAMP", sql, flags=re.I)
+    return sql
+
+
+class _CompatCursor:
+    """Курсор с трансляцией PostgreSQL-запросов и dict-подобными строками."""
+
+    def __init__(self, conn: sqlite3.Connection):
+        self._conn = conn
+        self._cur = conn.cursor()
+        self._returning_id = False
+
+    # ── основное ────────────────────────────────────────────
+    def execute(self, sql: str, params: Any = ()) -> "_CompatCursor":
+        self._returning_id = False
+
+        # TRUNCATE TABLE a, b RESTART IDENTITY CASCADE
+        m = _TRUNCATE_RE.match(sql)
+        if m:
+            tables = [t.strip() for t in m.group("tables").split(",") if t.strip()]
+            for table in tables:
+                self._cur.execute(f"DELETE FROM {table}")
+            for table in tables:
+                self._cur.execute("DELETE FROM sqlite_sequence WHERE name = ?", (table,))
+            return self
+
+        # ALTER TABLE ... ADD COLUMN IF NOT EXISTS ...
+        m = _ADD_COLUMN_RE.match(sql)
+        if m:
+            table, column = m.group("table"), m.group("column")
+            existing = {r["name"] for r in self._cur.execute(f"PRAGMA table_info({table})").fetchall()}
+            if column not in existing:
+                definition = _translate_sql(m.group("definition"))
+                # SQLite не умеет NOT NULL DEFAULT в ADD COLUMN без константы —
+                # значение по умолчанию здесь всегда константа, так что всё в порядке.
+                self._cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+            return self
+
+        # INSERT ... RETURNING id  → используем lastrowid
+        if _RETURNING_RE.search(sql):
+            sql = _RETURNING_RE.sub("", sql)
+            self._returning_id = True
+
+        self._cur.execute(_translate_sql(sql), tuple(params) if params else ())
+        return self
+
+    def executemany(self, sql: str, seq: Any) -> "_CompatCursor":
+        self._cur.executemany(_translate_sql(sql), seq)
+        return self
+
+    def fetchone(self):
+        if self._returning_id:
+            self._returning_id = False
+            return {"id": self._cur.lastrowid}
+        return self._cur.fetchone()
+
+    def fetchall(self):
+        return self._cur.fetchall()
+
+    def close(self) -> None:
+        self._cur.close()
+
+    # ── совместимость ───────────────────────────────────────
+    @property
+    def rowcount(self) -> int:
+        return self._cur.rowcount
+
+    @property
+    def lastrowid(self) -> int:
+        return self._cur.lastrowid
+
+    def __iter__(self):
+        return iter(self._cur)
+
+
+def dict_cursor(conn: sqlite3.Connection) -> _CompatCursor:
+    """Курсор, возвращающий строки как словари (совместим с кодом на psycopg2)."""
+    return _CompatCursor(conn)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -150,11 +185,11 @@ def dict_cursor(conn: psycopg2.extensions.connection) -> psycopg2.extras.RealDic
 def init_db() -> None:
     """Создаёт таблицы обоих доменов при первом запуске."""
     with _connect() as conn:
-        cur = dict_cursor(conn)
+        cur = conn.cursor()
 
         cur.execute("""
             CREATE TABLE IF NOT EXISTS atms (
-                id              SERIAL PRIMARY KEY,
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
                 terminal_id     TEXT UNIQUE NOT NULL,
                 atm_number      TEXT,
                 branch_code     TEXT,
@@ -166,13 +201,13 @@ def init_db() -> None:
                 serial          TEXT,
                 merchant_id     TEXT,
                 address         TEXT,
-                lat             DOUBLE PRECISION,
-                lon             DOUBLE PRECISION,
-                capacity        BIGINT NOT NULL DEFAULT 400000000,
-                balance         BIGINT,
-                last_balance_at TIMESTAMPTZ,
-                created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-                updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+                lat             REAL,
+                lon             REAL,
+                capacity        INTEGER NOT NULL DEFAULT 400000000,
+                balance         INTEGER,
+                last_balance_at TEXT,
+                created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
             )
         """)
         cur.execute("CREATE INDEX IF NOT EXISTS idx_atms_region ON atms(region)")
@@ -181,16 +216,16 @@ def init_db() -> None:
 
         cur.execute("""
             CREATE TABLE IF NOT EXISTS branches (
-                id              SERIAL PRIMARY KEY,
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
                 number          TEXT,
                 local_code      TEXT UNIQUE,
                 region          TEXT,
                 address         TEXT,
-                lat             DOUBLE PRECISION,
-                lon             DOUBLE PRECISION,
+                lat             REAL,
+                lon             REAL,
                 incassation     INTEGER NOT NULL DEFAULT 0,
-                created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-                updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+                created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
             )
         """)
         cur.execute("CREATE INDEX IF NOT EXISTS idx_branches_region ON branches(region)")
@@ -200,7 +235,7 @@ def init_db() -> None:
     # Домен кассиров живёт в отдельном модуле, чтобы не смешивать бизнес-логику.
     from .cashier_analytics import init_cashier_tables
     init_cashier_tables()
-    log.info("База данных инициализирована (ATM + филиалы + кассиры).")
+    log.info("База данных инициализирована: %s", DB_PATH)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -225,19 +260,12 @@ def _decorate_atm(d: Dict[str, Any]) -> Dict[str, Any]:
     bal = d.get("balance")
     d["balance_pct"] = round((bal / cap) * 100, 1) if bal is not None and cap else None
     d["status"] = _compute_status(bal, cap)
-    for key in ("created_at", "updated_at", "last_balance_at"):
-        if d.get(key) is not None:
-            d[key] = d[key].isoformat()
     return d
 
 
 def count_atms() -> int:
     with _connect() as conn:
-        cur = dict_cursor(conn)
-        cur.execute("SELECT COUNT(*) AS c FROM atms")
-        n = int(cur.fetchone()["c"])
-        cur.close()
-        return n
+        return int(conn.execute("SELECT COUNT(*) AS c FROM atms").fetchone()["c"])
 
 
 def list_atms(
@@ -247,22 +275,19 @@ def list_atms(
     limit: int = 1000,
     offset: int = 0,
 ) -> List[Dict[str, Any]]:
-    sql = "SELECT * FROM atms WHERE TRUE"
+    sql = "SELECT * FROM atms WHERE 1=1"
     params: list[Any] = []
     if region:
-        sql += " AND region = %s"
+        sql += " AND region = ?"
         params.append(region)
     if branch:
-        sql += " AND branch = %s"
+        sql += " AND branch = ?"
         params.append(branch)
-    sql += " ORDER BY id LIMIT %s OFFSET %s"
+    sql += " ORDER BY id LIMIT ? OFFSET ?"
     params.extend([limit, offset])
 
     with _connect() as conn:
-        cur = dict_cursor(conn)
-        cur.execute(sql, params)
-        rows = [_decorate_atm(dict(r)) for r in cur.fetchall()]
-        cur.close()
+        rows = [_decorate_atm(dict(r)) for r in conn.execute(sql, params).fetchall()]
 
     if status:
         rows = [r for r in rows if r["status"] == status]
@@ -271,26 +296,20 @@ def list_atms(
 
 def get_atm(terminal_id: str) -> Optional[Dict[str, Any]]:
     with _connect() as conn:
-        cur = dict_cursor(conn)
-        cur.execute("SELECT * FROM atms WHERE terminal_id = %s", (terminal_id,))
-        row = cur.fetchone()
-        cur.close()
+        row = conn.execute("SELECT * FROM atms WHERE terminal_id = ?", (terminal_id,)).fetchone()
     return _decorate_atm(dict(row)) if row else None
 
 
 def list_regions() -> List[Dict[str, Any]]:
     """Список областей с количеством ATM."""
     with _connect() as conn:
-        cur = dict_cursor(conn)
-        cur.execute("""
+        rows = conn.execute("""
             SELECT region, COUNT(*) AS cnt
               FROM atms
              WHERE region IS NOT NULL AND region <> ''
              GROUP BY region
              ORDER BY cnt DESC
-        """)
-        rows = cur.fetchall()
-        cur.close()
+        """).fetchall()
     return [{"region": r["region"], "count": int(r["cnt"])} for r in rows]
 
 
@@ -303,15 +322,12 @@ def list_branches(region: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     params: list[Any] = []
     if region:
-        sql += " AND region = %s"
+        sql += " AND region = ?"
         params.append(region)
     sql += " GROUP BY branch, region ORDER BY cnt DESC"
 
     with _connect() as conn:
-        cur = dict_cursor(conn)
-        cur.execute(sql, params)
-        rows = cur.fetchall()
-        cur.close()
+        rows = conn.execute(sql, params).fetchall()
     return [{"branch": r["branch"], "region": r["region"], "count": int(r["cnt"])} for r in rows]
 
 
@@ -322,96 +338,85 @@ def list_branches(region: Optional[str] = None) -> List[Dict[str, Any]]:
 def truncate_atms() -> int:
     """Удаляет все ATM, возвращает количество удалённых строк."""
     with _connect() as conn:
-        cur = dict_cursor(conn)
-        cur.execute("SELECT COUNT(*) AS c FROM atms")
-        n = int(cur.fetchone()["c"])
-        cur.execute("TRUNCATE TABLE atms RESTART IDENTITY CASCADE")
-        cur.close()
+        n = int(conn.execute("SELECT COUNT(*) AS c FROM atms").fetchone()["c"])
+        conn.execute("DELETE FROM atms")
+        conn.execute("DELETE FROM sqlite_sequence WHERE name = 'atms'")
     return n
 
 
 def bulk_insert_atms(records: List[Dict[str, Any]]) -> Dict[str, int]:
-    """Массовый UPSERT банкоматов по terminal_id."""
+    """Массовая вставка/обновление банкоматов по terminal_id."""
     stats = {"inserted": 0, "updated": 0, "skipped": 0}
     with _connect() as conn:
-        cur = dict_cursor(conn)
         for rec in records:
             terminal_id = (rec.get("terminal_id") or "").strip()
             if not terminal_id:
                 stats["skipped"] += 1
                 continue
 
-            cur.execute("""
-                INSERT INTO atms (
-                    terminal_id, atm_number, branch_code, local_code, region, branch,
-                    model, network_type, serial, merchant_id, address, lat, lon, capacity
-                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                ON CONFLICT (terminal_id) DO UPDATE SET
-                    atm_number   = EXCLUDED.atm_number,
-                    branch_code  = EXCLUDED.branch_code,
-                    local_code   = EXCLUDED.local_code,
-                    region       = EXCLUDED.region,
-                    branch       = EXCLUDED.branch,
-                    model        = EXCLUDED.model,
-                    network_type = EXCLUDED.network_type,
-                    serial       = EXCLUDED.serial,
-                    merchant_id  = EXCLUDED.merchant_id,
-                    address      = EXCLUDED.address,
-                    lat          = EXCLUDED.lat,
-                    lon          = EXCLUDED.lon,
-                    capacity     = EXCLUDED.capacity,
-                    updated_at   = now()
-                RETURNING (xmax = 0) AS inserted
-            """, (
-                terminal_id,
+            values = (
                 rec.get("atm_number"), rec.get("branch_code"), rec.get("local_code"),
                 rec.get("region"), rec.get("branch"), rec.get("model"),
                 rec.get("network_type"), rec.get("serial"), rec.get("merchant_id"),
                 rec.get("address"), rec.get("lat"), rec.get("lon"),
                 rec.get("capacity") or DEFAULT_CAPACITY,
-            ))
-            if cur.fetchone()["inserted"]:
-                stats["inserted"] += 1
-            else:
+            )
+
+            exists = conn.execute(
+                "SELECT 1 FROM atms WHERE terminal_id = ?", (terminal_id,)
+            ).fetchone()
+
+            if exists:
+                conn.execute("""
+                    UPDATE atms SET
+                        atm_number = ?, branch_code = ?, local_code = ?, region = ?,
+                        branch = ?, model = ?, network_type = ?, serial = ?,
+                        merchant_id = ?, address = ?, lat = ?, lon = ?, capacity = ?,
+                        updated_at = datetime('now')
+                     WHERE terminal_id = ?
+                """, (*values, terminal_id))
                 stats["updated"] += 1
-        cur.close()
+            else:
+                conn.execute("""
+                    INSERT INTO atms (
+                        atm_number, branch_code, local_code, region, branch, model,
+                        network_type, serial, merchant_id, address, lat, lon, capacity,
+                        terminal_id
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """, (*values, terminal_id))
+                stats["inserted"] += 1
     return stats
 
 
 def update_balance(terminal_id: str, balance: int) -> bool:
     """Обновляет остаток одного ATM."""
     with _connect() as conn:
-        cur = dict_cursor(conn)
-        cur.execute("""
+        cur = conn.execute("""
             UPDATE atms
-               SET balance = %s, last_balance_at = now(), updated_at = now()
-             WHERE terminal_id = %s
+               SET balance = ?, last_balance_at = datetime('now'), updated_at = datetime('now')
+             WHERE terminal_id = ?
         """, (int(balance), terminal_id))
-        ok = cur.rowcount > 0
-        cur.close()
-    return ok
+        return cur.rowcount > 0
 
 
 def bulk_update_balances(updates: List[Dict[str, Any]]) -> Dict[str, int]:
     """Массовое обновление остатков: [{terminal_id, balance}, ...]"""
     ok, fail = 0, 0
     with _connect() as conn:
-        cur = dict_cursor(conn)
         for u in updates:
             tid, bal = u.get("terminal_id"), u.get("balance")
             if not tid or bal is None:
                 fail += 1
                 continue
-            cur.execute("""
+            cur = conn.execute("""
                 UPDATE atms
-                   SET balance = %s, last_balance_at = now(), updated_at = now()
-                 WHERE terminal_id = %s
+                   SET balance = ?, last_balance_at = datetime('now'), updated_at = datetime('now')
+                 WHERE terminal_id = ?
             """, (int(bal), tid))
             if cur.rowcount:
                 ok += 1
             else:
                 fail += 1
-        cur.close()
     return {"updated": ok, "failed": fail}
 
 
@@ -419,20 +424,9 @@ def bulk_update_balances(updates: List[Dict[str, Any]]) -> Dict[str, int]:
 # ФИЛИАЛЫ
 # ═══════════════════════════════════════════════════════════
 
-def _decorate_branch(d: Dict[str, Any]) -> Dict[str, Any]:
-    for key in ("created_at", "updated_at"):
-        if d.get(key) is not None:
-            d[key] = d[key].isoformat()
-    return d
-
-
 def count_branches() -> int:
     with _connect() as conn:
-        cur = dict_cursor(conn)
-        cur.execute("SELECT COUNT(*) AS c FROM branches")
-        n = int(cur.fetchone()["c"])
-        cur.close()
-    return n
+        return int(conn.execute("SELECT COUNT(*) AS c FROM branches").fetchone()["c"])
 
 
 def list_branches_full(
@@ -441,49 +435,39 @@ def list_branches_full(
     limit: int = 5000,
     offset: int = 0,
 ) -> List[Dict[str, Any]]:
-    sql = "SELECT * FROM branches WHERE TRUE"
+    sql = "SELECT * FROM branches WHERE 1=1"
     params: list[Any] = []
     if region:
-        sql += " AND region = %s"
+        sql += " AND region = ?"
         params.append(region)
     if incassation is not None:
-        sql += " AND incassation = %s"
+        sql += " AND incassation = ?"
         params.append(int(incassation))
-    sql += " ORDER BY id LIMIT %s OFFSET %s"
+    sql += " ORDER BY id LIMIT ? OFFSET ?"
     params.extend([limit, offset])
 
     with _connect() as conn:
-        cur = dict_cursor(conn)
-        cur.execute(sql, params)
-        rows = [_decorate_branch(dict(r)) for r in cur.fetchall()]
-        cur.close()
-    return rows
+        return [dict(r) for r in conn.execute(sql, params).fetchall()]
 
 
 def get_branch(local_code: str) -> Optional[Dict[str, Any]]:
     with _connect() as conn:
-        cur = dict_cursor(conn)
-        cur.execute("SELECT * FROM branches WHERE local_code = %s", (local_code,))
-        row = cur.fetchone()
-        cur.close()
-    return _decorate_branch(dict(row)) if row else None
+        row = conn.execute("SELECT * FROM branches WHERE local_code = ?", (local_code,)).fetchone()
+    return dict(row) if row else None
 
 
 def truncate_branches() -> int:
     with _connect() as conn:
-        cur = dict_cursor(conn)
-        cur.execute("SELECT COUNT(*) AS c FROM branches")
-        n = int(cur.fetchone()["c"])
-        cur.execute("TRUNCATE TABLE branches RESTART IDENTITY CASCADE")
-        cur.close()
+        n = int(conn.execute("SELECT COUNT(*) AS c FROM branches").fetchone()["c"])
+        conn.execute("DELETE FROM branches")
+        conn.execute("DELETE FROM sqlite_sequence WHERE name = 'branches'")
     return n
 
 
 def bulk_insert_branches(records: List[Dict[str, Any]]) -> Dict[str, int]:
-    """Массовый UPSERT филиалов по local_code."""
+    """Массовая вставка/обновление филиалов по local_code."""
     stats = {"inserted": 0, "updated": 0, "skipped": 0}
     with _connect() as conn:
-        cur = dict_cursor(conn)
         for rec in records:
             local_code = (rec.get("local_code") or "").strip() or None
             values = (
@@ -491,29 +475,24 @@ def bulk_insert_branches(records: List[Dict[str, Any]]) -> Dict[str, int]:
                 rec.get("lat"), rec.get("lon"), int(rec.get("incassation") or 0),
             )
 
+            exists = None
             if local_code:
-                cur.execute("""
-                    INSERT INTO branches (number, local_code, region, address, lat, lon, incassation)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s)
-                    ON CONFLICT (local_code) DO UPDATE SET
-                        number      = EXCLUDED.number,
-                        region      = EXCLUDED.region,
-                        address     = EXCLUDED.address,
-                        lat         = EXCLUDED.lat,
-                        lon         = EXCLUDED.lon,
-                        incassation = EXCLUDED.incassation,
-                        updated_at  = now()
-                    RETURNING (xmax = 0) AS inserted
-                """, (values[0], local_code, *values[1:]))
-                if cur.fetchone()["inserted"]:
-                    stats["inserted"] += 1
-                else:
-                    stats["updated"] += 1
+                exists = conn.execute(
+                    "SELECT 1 FROM branches WHERE local_code = ?", (local_code,)
+                ).fetchone()
+
+            if exists:
+                conn.execute("""
+                    UPDATE branches SET
+                        number = ?, region = ?, address = ?, lat = ?, lon = ?,
+                        incassation = ?, updated_at = datetime('now')
+                     WHERE local_code = ?
+                """, (*values, local_code))
+                stats["updated"] += 1
             else:
-                cur.execute("""
-                    INSERT INTO branches (number, local_code, region, address, lat, lon, incassation)
-                    VALUES (%s, NULL, %s,%s,%s,%s,%s)
-                """, values)
+                conn.execute("""
+                    INSERT INTO branches (number, region, address, lat, lon, incassation, local_code)
+                    VALUES (?,?,?,?,?,?,?)
+                """, (*values, local_code))
                 stats["inserted"] += 1
-        cur.close()
     return stats

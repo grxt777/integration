@@ -358,6 +358,17 @@ def cashier_analytics(
             if not any(kw in n_pos for kw in KASSIR_KEYWORDS):
                 continue
 
+            # Сотрудники из реестра штата добавляются уже после SQL-фильтрации,
+            # поэтому фильтры по должности и филиалу нужно применить к ним вручную —
+            # иначе отсеянные записи возвращались бы в выдачу.
+            if position and str(position).strip():
+                if n_pos != norm(str(position).strip()):
+                    continue
+            if branch and str(branch).strip():
+                st_branch = clean_branch_name(st.get('branch_name') or '')
+                if str(branch).strip().lower() not in st_branch.lower():
+                    continue
+
             if st_code == 'vacant':
                 if len(vacant_kpi_keys) > 0:
                     continue
