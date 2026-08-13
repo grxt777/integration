@@ -47,17 +47,38 @@ docker compose up --build
 
 ### Вариант 2 — локально
 
+Нужен запущенный PostgreSQL. Полная последовательность с нуля:
+
 ```bash
-cp .env.example .env          # при необходимости поправьте доступы к БД
+# 1. Установить и запустить PostgreSQL
+#    macOS:  brew install postgresql@16 && brew services start postgresql@16
+#    Linux:  sudo apt install postgresql && sudo systemctl start postgresql
+
+# 2. Создать роль и базу (bank / bank_db)
+./scripts/setup-postgres.sh
+
+# 3. Запустить приложение
 ./run.sh
 ```
 
 `run.sh` установит зависимости, подхватит `.env` и запустит сервер на `0.0.0.0:8000`.
+При необходимости скопируйте `.env.example` в `.env` и поправьте доступы к БД.
 
 ### Требования
 
-* Python 3.11+
-* PostgreSQL 14+ (база создаётся автоматически при первом старте, кодировка UTF8)
+* Python 3.9+
+* PostgreSQL 14+ (сама база создаётся автоматически при первом старте, кодировка UTF8)
+
+### Частые проблемы
+
+| Симптом | Решение |
+|---|---|
+| `Connection refused ... port 5432` | PostgreSQL не запущен: `brew services start postgresql@16` (macOS) или `sudo systemctl start postgresql` (Linux) |
+| `role "bank" does not exist` / ошибка пароля | Выполните `./scripts/setup-postgres.sh` |
+| `Address already in use` при старте | Порт 8000 занят прошлым запуском: `lsof -ti:8000 \| xargs kill -9` |
+
+При проблемах с подключением приложение выводит понятное сообщение с текущими
+настройками и командами для исправления — вместо стектрейса драйвера.
 
 ---
 
@@ -141,6 +162,7 @@ api/
       analytics.py         # расчёт нагрузки, БЭК/ФРОНТ, выборки
 dashboard/                 # статические страницы обоих модулей
 migrations/                # SQL-схема (000 — ATM/филиалы, 001 — кассиры)
+scripts/setup-postgres.sh  # создание роли и базы в локальном PostgreSQL
 tests/                     # pytest для аналитики кассиров
 legacy/                    # исторические скрипты сбора данных по ATM
 samples/                   # примеры Excel-файлов

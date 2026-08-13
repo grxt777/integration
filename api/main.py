@@ -56,6 +56,7 @@ from pydantic import BaseModel
 
 from core.config import BASE_DIR
 from core.db import (
+    DatabaseUnavailableError,
     bulk_insert_atms,
     bulk_insert_branches,
     bulk_update_balances,
@@ -95,7 +96,14 @@ log = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     log.info("Инициализация БД Bank Intelligence Platform...")
-    init_db()
+    try:
+        init_db()
+    except DatabaseUnavailableError as e:
+        # Показываем понятную инструкцию вместо многоэтажного traceback psycopg2
+        # и глушим вывод стектрейса Starlette — он здесь ничего не добавляет.
+        print(str(e), file=sys.stderr, flush=True)
+        logging.getLogger("uvicorn.error").setLevel(logging.CRITICAL)
+        os._exit(1)
     log.info("БД готова. ATM в базе: %d, филиалов: %d", count_atms(), count_branches())
     yield
     log.info("Сервер остановлен.")

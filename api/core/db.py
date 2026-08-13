@@ -18,6 +18,9 @@ import psycopg2.pool
 
 from .config import (
     DATABASE_URL,
+    POSTGRES_HOST,
+    POSTGRES_PORT,
+    POSTGRES_USER,
     DEFAULT_CAPACITY,
     LOW_CASH_PCT,
     POSTGRES_ADMIN_URL,
@@ -30,10 +33,68 @@ log = logging.getLogger(__name__)
 _pool: psycopg2.pool.ThreadedConnectionPool | None = None
 
 
+class DatabaseUnavailableError(RuntimeError):
+    """PostgreSQL недоступен или доступ не настроен — с инструкцией для пользователя."""
+
+
+def _connection_help(error: Exception) -> str:
+    """Формирует понятное сообщение вместо сырого traceback psycopg2."""
+    text = str(error)
+
+    if "could not connect" in text or "Connection refused" in text or "не удалось" in text.lower():
+        reason = (
+            f"PostgreSQL не отвечает на {POSTGRES_HOST}:{POSTGRES_PORT} — похоже, сервер не запущен.\n\n"
+            "  Как запустить:\n"
+            "    macOS (Homebrew):  brew services start postgresql@16\n"
+            "    Linux (systemd):   sudo systemctl start postgresql\n"
+            "    Docker (всё сразу): docker compose up\n\n"
+            "  Если PostgreSQL ещё не установлен:\n"
+            "    macOS:  brew install postgresql@16 && brew services start postgresql@16\n"
+        )
+    elif "password authentication failed" in text or "authentication" in text:
+        reason = (
+            f"Неверный логин или пароль для пользователя '{POSTGRES_USER}'.\n\n"
+            "  Создайте роль и базу одной командой:\n"
+            "    ./scripts/setup-postgres.sh\n\n"
+            "  Либо поправьте доступы в файле .env\n"
+        )
+    elif "does not exist" in text and "role" in text:
+        reason = (
+            f"Роль '{POSTGRES_USER}' не существует в PostgreSQL.\n\n"
+            "  Создайте роль и базу одной командой:\n"
+            "    ./scripts/setup-postgres.sh\n"
+        )
+    else:
+        reason = (
+            "Не удалось подключиться к PostgreSQL.\n\n"
+            "  Проверьте, что сервер запущен, и настройте доступ:\n"
+            "    ./scripts/setup-postgres.sh\n"
+        )
+
+    return (
+        "\n"
+        "═══════════════════════════════════════════════════════════\n"
+        " ❌ НЕТ ПОДКЛЮЧЕНИЯ К БАЗЕ ДАННЫХ\n"
+        "═══════════════════════════════════════════════════════════\n\n"
+        f"{reason}\n"
+        "  Текущие настройки (из .env или значения по умолчанию):\n"
+        f"    POSTGRES_HOST={POSTGRES_HOST}\n"
+        f"    POSTGRES_PORT={POSTGRES_PORT}\n"
+        f"    POSTGRES_DB={POSTGRES_DB}\n"
+        f"    POSTGRES_USER={POSTGRES_USER}\n\n"
+        f"  Исходная ошибка: {text.strip().splitlines()[0] if text.strip() else error}\n"
+        "═══════════════════════════════════════════════════════════"
+    )
+
+
 def _ensure_database_exists() -> None:
     """Создаёт базу данных приложения, если её ещё нет."""
     try:
         conn = psycopg2.connect(POSTGRES_ADMIN_URL)
+    except psycopg2.OperationalError as e:
+        raise DatabaseUnavailableError(_connection_help(e)) from None
+
+    try:
         conn.autocommit = True
         cur = conn.cursor()
         cur.execute("SELECT 1 FROM pg_database WHERE datname = %s", (POSTGRES_DB,))
@@ -42,17 +103,20 @@ def _ensure_database_exists() -> None:
             cur.execute(f"CREATE DATABASE {POSTGRES_DB} ENCODING 'UTF8' TEMPLATE template0")
             log.info("Создана база данных PostgreSQL: %s", POSTGRES_DB)
         cur.close()
+    except psycopg2.Error as e:
+        raise DatabaseUnavailableError(_connection_help(e)) from None
+    finally:
         conn.close()
-    except Exception as e:
-        log.error("Не удалось проверить/создать базу данных: %s", e)
-        raise
 
 
 def _get_pool() -> psycopg2.pool.ThreadedConnectionPool:
     global _pool
     if _pool is None:
         _ensure_database_exists()
-        _pool = psycopg2.pool.ThreadedConnectionPool(minconn=1, maxconn=10, dsn=DATABASE_URL)
+        try:
+            _pool = psycopg2.pool.ThreadedConnectionPool(minconn=1, maxconn=10, dsn=DATABASE_URL)
+        except psycopg2.OperationalError as e:
+            raise DatabaseUnavailableError(_connection_help(e)) from None
         log.info("Пул соединений PostgreSQL инициализирован.")
     return _pool
 
