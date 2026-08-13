@@ -47,22 +47,27 @@ docker compose up --build
 
 ### Вариант 2 — локально
 
-Нужен запущенный PostgreSQL. Полная последовательность с нуля:
-
 ```bash
-# 1. Установить и запустить PostgreSQL
-#    macOS:  brew install postgresql@16 && brew services start postgresql@16
-#    Linux:  sudo apt install postgresql && sudo systemctl start postgresql
-
-# 2. Создать роль и базу (bank / bank_db)
-./scripts/setup-postgres.sh
-
-# 3. Запустить приложение
 ./run.sh
 ```
 
-`run.sh` установит зависимости, подхватит `.env` и запустит сервер на `0.0.0.0:8000`.
+Больше ничего делать не нужно — скрипт сам:
+
+1. установит зависимости Python;
+2. запустит PostgreSQL (а на macOS с Homebrew при необходимости и установит его);
+3. создаст роль `bank` и базу `bank_db` в кодировке UTF8;
+4. освободит порт 8000, если его занял прошлый запуск;
+5. поднимет сервер на `0.0.0.0:8000`.
+
+Полезные переменные:
+
+```bash
+APP_PORT=8001 ./run.sh      # запустить на другом порту
+SKIP_DB_SETUP=1 ./run.sh    # не трогать базу (например, она удалённая)
+```
+
 При необходимости скопируйте `.env.example` в `.env` и поправьте доступы к БД.
+Настроить только базу, без запуска приложения: `./scripts/setup-postgres.sh`.
 
 ### Требования
 
@@ -73,9 +78,10 @@ docker compose up --build
 
 | Симптом | Решение |
 |---|---|
-| `Connection refused ... port 5432` | PostgreSQL не запущен: `brew services start postgresql@16` (macOS) или `sudo systemctl start postgresql` (Linux) |
-| `role "bank" does not exist` / ошибка пароля | Выполните `./scripts/setup-postgres.sh` |
-| `Address already in use` при старте | Порт 8000 занят прошлым запуском: `lsof -ti:8000 \| xargs kill -9` |
+| `Connection refused ... port 5432` | Запустите через `./run.sh` — он поднимет PostgreSQL сам. Вручную: `brew services start postgresql@16` (macOS), `sudo systemctl start postgresql` (Linux) |
+| `role "bank" does not exist` / ошибка пароля | `./scripts/setup-postgres.sh` |
+| `Address already in use` | `./run.sh` сам освободит порт. Иначе: `lsof -ti:8000 \| xargs kill -9` или `APP_PORT=8001 ./run.sh` |
+| Нет прав на `brew` / нет PostgreSQL | Поднимите всё в контейнерах: `docker compose up` |
 
 При проблемах с подключением приложение выводит понятное сообщение с текущими
 настройками и командами для исправления — вместо стектрейса драйвера.

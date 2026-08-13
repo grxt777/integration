@@ -26,25 +26,55 @@ DB_PASS="${POSTGRES_PASSWORD:-bank}"
 
 echo "🔧 Настройка PostgreSQL: роль '$DB_USER', база '$DB_NAME' на $DB_HOST:$DB_PORT"
 
-# Определяем суперпользователя, под которым можно создать роль.
-# В Homebrew это текущий пользователь macOS, в Linux/Docker — postgres.
-SUPERUSER=""
+# Homebrew ставит postgresql в отдельный префикс и не всегда добавляет его в PATH.
+if ! command -v psql >/dev/null 2>&1 && command -v brew >/dev/null 2>&1; then
+  for formula in $(brew list --formula 2>/dev/null | grep -E '^postgresql(@[0-9]+)?$'); do
+    prefix="$(brew --prefix "$formula" 2>/dev/null)"
+    if [ -n "$prefix" ] && [ -x "$prefix/bin/psql" ]; then
+      export PATH="$prefix/bin:$PATH"
+      break
+    fi
+  done
+fi
+
+if ! command -v psql >/dev/null 2>&1; then
+  echo "❌ Утилита psql не найдена."
+  echo "   macOS:  brew install postgresql@16"
+  echo "   Linux:  sudo apt install postgresql-client"
+  exit 1
+fi
+
+# Определяем, как подключиться с правами суперпользователя.
+# macOS/Homebrew — текущий пользователь по TCP; Linux — обычно только
+# локальный сокет под системным пользователем postgres (peer-аутентификация).
+PSQL=""
 for candidate in "$USER" postgres; do
   if psql -h "$DB_HOST" -p "$DB_PORT" -U "$candidate" -d postgres -c '\q' >/dev/null 2>&1; then
-    SUPERUSER="$candidate"
+    PSQL="psql -h $DB_HOST -p $DB_PORT -U $candidate -d postgres -v ON_ERROR_STOP=1"
+    echo "✅ Подключение установлено под суперпользователем '$candidate'"
     break
   fi
 done
 
-if [ -z "$SUPERUSER" ]; then
-  echo "❌ Не удалось подключиться к PostgreSQL под '$USER' или 'postgres'."
-  echo "   Убедитесь, что сервер запущен:  brew services start postgresql@16"
-  exit 1
+if [ -z "$PSQL" ] && command -v sudo >/dev/null 2>&1; then
+  if sudo -n -u postgres psql -d postgres -c '\q' >/dev/null 2>&1; then
+    PSQL="sudo -n -u postgres psql -d postgres -v ON_ERROR_STOP=1"
+    echo "✅ Подключение установлено через sudo -u postgres (локальный сокет)"
+  elif sudo -u postgres psql -d postgres -c '\q' >/dev/null 2>&1; then
+    PSQL="sudo -u postgres psql -d postgres -v ON_ERROR_STOP=1"
+    echo "✅ Подключение установлено через sudo -u postgres (локальный сокет)"
+  fi
 fi
 
-echo "✅ Подключение установлено под суперпользователем '$SUPERUSER'"
-
-PSQL="psql -h $DB_HOST -p $DB_PORT -U $SUPERUSER -d postgres -v ON_ERROR_STOP=1"
+if [ -z "$PSQL" ]; then
+  echo "❌ Не удалось подключиться к PostgreSQL с правами суперпользователя."
+  echo "   Пробовал: пользователь '$USER', 'postgres' по TCP и sudo -u postgres."
+  echo ""
+  echo "   Убедитесь, что сервер запущен:"
+  echo "     macOS:  brew services start postgresql@16"
+  echo "     Linux:  sudo systemctl start postgresql"
+  exit 1
+fi
 
 # Роль
 if $PSQL -tAc "SELECT 1 FROM pg_roles WHERE rolname='$DB_USER'" | grep -q 1; then
@@ -66,4 +96,8 @@ fi
 $PSQL -c "GRANT ALL PRIVILEGES ON DATABASE \"$DB_NAME\" TO \"$DB_USER\";" >/dev/null
 
 echo ""
-echo "🎉 Готово. Теперь запустите приложение:  ./run.sh"
+if [ "$CALLED_FROM_RUN_SH" = "1" ]; then
+  echo "🎉 База готова."
+else
+  echo "🎉 Готово. Теперь запустите приложение:  ./run.sh"
+fi
