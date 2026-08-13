@@ -1,0 +1,1014 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Профиль Кассира и Аналитика — SQB Arena</title>
+
+  <!-- Fonts & Libraries -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@600;700;850&display=swap" rel="stylesheet">
+  <script src="/dashboard/js/utils.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #f8fafc;
+      --surface: #ffffff;
+      --border: #e2e8f0;
+      --border-hover: #cbd5e1;
+      --text: #0f172a;
+      --text-muted: #64748b;
+      --primary: #2563eb;
+      --primary-gradient: linear-gradient(135deg, #2563eb, #3b82f6);
+      --emerald-gradient: linear-gradient(135deg, #059669, #10b981);
+      --purple-gradient: linear-gradient(135deg, #7c3aed, #8b5cf6);
+      --amber-gradient: linear-gradient(135deg, #d97706, #f59e0b);
+      --rose-gradient: linear-gradient(135deg, #e11d48, #f43f5e);
+      --shadow-sm: 0 1px 3px rgba(15, 23, 42, 0.06);
+      --shadow-md: 0 4px 20px -2px rgba(15, 23, 42, 0.08);
+      --shadow-lg: 0 20px 35px -5px rgba(15, 23, 42, 0.12);
+    }
+
+    body {
+      font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      padding-bottom: 60px;
+    }
+
+    /* Header */
+    header {
+      height: 64px;
+      background: rgba(255, 255, 255, 0.94);
+      backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 32px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .back-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--primary);
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 700;
+      padding: 8px 14px;
+      border-radius: 10px;
+      background: #eff6ff;
+      border: 1px solid #bfdbfe;
+      transition: all 0.15s ease;
+    }
+
+    .back-link:hover {
+      background: #dbeafe;
+      transform: translateX(-2px);
+    }
+
+    .brand-title {
+      font-family: 'Outfit', sans-serif;
+      font-size: 18px;
+      font-weight: 850;
+      color: var(--text);
+    }
+
+    /* Layout Wrapper */
+    .container {
+      max-width: 1280px;
+      width: 100%;
+      margin: 28px auto;
+      padding: 0 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    /* Hero Card */
+    .hero-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 24px;
+      padding: 28px;
+      box-shadow: var(--shadow-md);
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0; height: 6px;
+      background: var(--primary-gradient);
+    }
+
+    .hero-top {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 20px;
+      flex-wrap: wrap;
+    }
+
+    .hero-left {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+
+    .avatar-lg {
+      width: 72px;
+      height: 72px;
+      border-radius: 20px;
+      background: var(--primary-gradient);
+      color: #fff;
+      font-family: 'Outfit', sans-serif;
+      font-size: 26px;
+      font-weight: 850;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 10px 25px rgba(37, 99, 235, 0.3);
+      flex-shrink: 0;
+    }
+
+    .hero-details h1 {
+      font-family: 'Outfit', sans-serif;
+      font-size: 26px;
+      font-weight: 850;
+      color: var(--text);
+      line-height: 1.2;
+      margin-bottom: 6px;
+    }
+
+    .hero-badges {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .badge-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 12px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .badge-role-front {
+      background: #eff6ff;
+      color: #1d4ed8;
+      border: 1px solid #bfdbfe;
+    }
+
+    .badge-role-back {
+      background: #f5f3ff;
+      color: #6d28d9;
+      border: 1px solid #ddd6fe;
+    }
+
+    .badge-branch {
+      background: #ecfdf5;
+      color: #047857;
+      border: 1px solid #a7f3d0;
+    }
+
+    .hero-meta-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+      padding: 16px;
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+    }
+
+    .meta-item {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .meta-label {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+    }
+
+    .meta-val {
+      font-size: 14px;
+      font-weight: 800;
+      color: var(--text);
+    }
+
+    /* HR Status Banner */
+    .hr-banner {
+      padding: 14px 18px;
+      border-radius: 14px;
+      font-size: 13px;
+      font-weight: 600;
+      line-height: 1.5;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    /* KPI Highlight Grid */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 18px;
+    }
+
+    @media (max-width: 1024px) {
+      .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    @media (max-width: 640px) {
+      .kpi-grid { grid-template-columns: 1fr; }
+    }
+
+    .kpi-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 22px;
+      box-shadow: var(--shadow-sm);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      transition: all 0.2s ease;
+    }
+
+    .kpi-card:hover {
+      box-shadow: var(--shadow-md);
+      border-color: var(--border-hover);
+    }
+
+    .kpi-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .kpi-icon {
+      width: 42px;
+      height: 42px;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+    }
+
+    .kpi-title {
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+    }
+
+    .kpi-val {
+      font-family: 'Outfit', sans-serif;
+      font-size: 28px;
+      font-weight: 850;
+      color: var(--text);
+      line-height: 1;
+    }
+
+    .kpi-sub {
+      font-size: 12px;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+
+    /* Progress bar */
+    .progress-track {
+      height: 6px;
+      background: #e2e8f0;
+      border-radius: 99px;
+      overflow: hidden;
+      margin-top: 4px;
+    }
+
+    .progress-fill {
+      height: 100%;
+      border-radius: 99px;
+    }
+
+    /* Main 2-Col Grid */
+    .grid-2col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+    }
+
+    @media (max-width: 992px) {
+      .grid-2col { grid-template-columns: 1fr; }
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 24px;
+      box-shadow: var(--shadow-sm);
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    .card-title {
+      font-size: 17px;
+      font-weight: 800;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .chart-box {
+      height: 450px;
+      position: relative;
+    }
+
+    /* Data Table Styling */
+    .table-wrapper {
+      width: 100%;
+      overflow-x: auto;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 13px;
+    }
+
+    th {
+      background: #f8fafc;
+      padding: 12px 16px;
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+
+    td {
+      padding: 12px 16px;
+      border-bottom: 1px solid #f1f5f9;
+      color: var(--text);
+      vertical-align: middle;
+      white-space: nowrap;
+    }
+
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #f8fafc; }
+
+    /* Score Badge */
+    .score-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 14px;
+      border-radius: 10px;
+      font-weight: 800;
+      font-size: 13px;
+    }
+
+    .score-top { background: #dcfce7; color: #15803d; border: 1px solid #bbf7d0; }
+    .score-opt { background: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd; }
+    .score-avg { background: #fef3c7; color: #b45309; border: 1px solid #fde68a; }
+    .score-low { background: #fee2e2; color: #b91c1c; border: 1px solid #fca5a5; }
+
+    /* Discipline/Sanction Card */
+    .discipline-card {
+      background: linear-gradient(135deg, #fff1f2, #fef2f2);
+      border: 2px solid #fecdd3;
+      border-radius: 20px;
+      padding: 24px;
+      box-shadow: 0 4px 20px rgba(190, 18, 60, 0.12);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .discipline-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; width: 6px; height: 100%;
+      background: linear-gradient(180deg, #be123c, #f43f5e);
+    }
+
+    .discipline-header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 18px;
+    }
+
+    .discipline-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 14px;
+      background: linear-gradient(135deg, #be123c, #f43f5e);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+      font-size: 22px;
+      box-shadow: 0 6px 16px rgba(190, 18, 60, 0.35);
+      flex-shrink: 0;
+    }
+
+    .discipline-title {
+      font-family: 'Outfit', sans-serif;
+      font-size: 18px;
+      font-weight: 850;
+      color: #9f1239;
+    }
+
+    .discipline-subtitle {
+      font-size: 12px;
+      color: #be123c;
+      font-weight: 600;
+      margin-top: 2px;
+    }
+
+    .discipline-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 14px;
+    }
+
+    .discipline-field {
+      background: rgba(255, 255, 255, 0.7);
+      border: 1px solid #fecdd3;
+      border-radius: 12px;
+      padding: 14px 16px;
+    }
+
+    .discipline-field-label {
+      font-size: 10px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #be123c;
+      margin-bottom: 6px;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .discipline-field-val {
+      font-size: 14px;
+      font-weight: 700;
+      color: #7f1d1d;
+      line-height: 1.4;
+    }
+
+    .no-discipline-msg {
+      text-align: center;
+      padding: 32px 20px;
+      color: #94a3b8;
+    }
+
+    /* Loader */
+    .loading-state {
+      padding: 60px 20px;
+      text-align: center;
+      color: var(--text-muted);
+    }
+
+    .spinner {
+      width: 40px;
+      height: 40px;
+      border: 4px solid var(--border);
+      border-top-color: var(--primary);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 0 auto 16px;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <header>
+    <a href="/dashboard/cashiers.html" class="back-link">
+      <i data-lucide="arrow-left" style="width:16px;height:16px"></i>
+      Вернуться к списку кассиров
+    </a>
+    <div class="brand-title">SQB Cashier Intelligence</div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="container">
+
+    <!-- Loading State -->
+    <div id="loading" class="loading-state">
+      <div class="spinner"></div>
+      <b style="font-size:16px;color:var(--text)">Загрузка профиля кассира...</b>
+    </div>
+
+    <!-- Error State -->
+    <div id="error-card" class="card" style="display:none;background:#fef2f2;border-color:#fca5a5;color:#991b1b;text-align:center;padding:40px">
+      <i data-lucide="alert-triangle" style="width:48px;height:48px;margin:0 auto 12px;color:#dc2626"></i>
+      <h2 style="font-size:20px;margin-bottom:8px">Ошибка получения данных</h2>
+      <p id="error-msg" style="font-size:14px;color:#7f1d1d"></p>
+      <div style="margin-top:20px">
+        <a href="/dashboard/cashiers.html" class="back-link">Повторить попытку</a>
+      </div>
+    </div>
+
+    <!-- Profile Content -->
+    <div id="content" style="display:none;flex-direction:column;gap:24px">
+
+      <!-- Hero Header Card -->
+      <section class="hero-card">
+        <div class="hero-top">
+          <div class="hero-left">
+            <div class="avatar-lg" id="avatar">—</div>
+            <div class="hero-details">
+              <h1 id="full-name">—</h1>
+              <div class="hero-badges">
+                <span id="role-badge" class="badge-item badge-role-back">💼 БЭК-кассир</span>
+                <span id="branch-badge" class="badge-item badge-branch">🏛️ ЦБУ / Филиал</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- HR Status Banner -->
+        <div id="hr-banner" class="hr-banner" style="display:none"></div>
+
+        <!-- Meta Grid -->
+        <div class="hero-meta-grid">
+          <div class="meta-item">
+            <span class="meta-label">Табельный номер</span>
+            <span class="meta-val" id="meta-tab">—</span>
+          </div>
+          <div class="meta-item">
+            <span class="meta-label">№ Сотрудника</span>
+            <span class="meta-val" id="meta-emp">—</span>
+          </div>
+          <div class="meta-item">
+            <span class="meta-label">Должность</span>
+            <span class="meta-val" id="meta-pos">—</span>
+          </div>
+          <div class="meta-item">
+            <span class="meta-label">Отработано дней</span>
+            <span class="meta-val" id="meta-days">—</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- KPI Highlight Cards -->
+      <section class="kpi-grid">
+        <!-- Card 1: BEK / FRONT -->
+        <div class="kpi-card">
+          <div class="kpi-header">
+            <span class="kpi-title">БЭК / ФРОНТ</span>
+            <div class="kpi-icon" style="background:var(--emerald-gradient)">
+              <i data-lucide="split" style="width:20px;height:20px"></i>
+            </div>
+          </div>
+          <div class="kpi-val" id="kpi-bek-front-val" style="font-size:22px">—</div>
+          <div class="kpi-sub" id="kpi-bek-front-sub">Операции по ролям</div>
+          <div class="progress-track">
+            <div id="kpi-bek-bar" class="progress-fill" style="background:#7c3aed;width:0%"></div>
+          </div>
+        </div>
+
+        <!-- Card 2: Operations -->
+        <div class="kpi-card">
+          <div class="kpi-header">
+            <span class="kpi-title">Всего операций</span>
+            <div class="kpi-icon" style="background:var(--primary-gradient)">
+              <i data-lucide="layers" style="width:20px;height:20px"></i>
+            </div>
+          </div>
+          <div class="kpi-val" id="kpi-ops-val">—</div>
+          <div class="kpi-sub" id="kpi-ops-perday">В день в среднем: — опер.</div>
+          <div class="progress-track">
+            <div id="kpi-ops-bar" class="progress-fill" style="background:#3b82f6;width:0%"></div>
+          </div>
+        </div>
+
+        <!-- Card 3: Workload -->
+        <div class="kpi-card">
+          <div class="kpi-header">
+            <span class="kpi-title">Уровень нагрузки</span>
+            <div class="kpi-icon" style="background:var(--amber-gradient)">
+              <i data-lucide="activity" style="width:20px;height:20px"></i>
+            </div>
+          </div>
+          <div class="kpi-val" id="kpi-load-val">—</div>
+          <div class="kpi-sub" id="kpi-load-sub">Норма: 100%</div>
+          <div class="progress-track">
+            <div id="kpi-load-bar" class="progress-fill" style="background:#f59e0b;width:0%"></div>
+          </div>
+        </div>
+
+        <!-- Card 4: Speed -->
+        <div class="kpi-card">
+          <div class="kpi-header">
+            <span class="kpi-title">Скорость операций</span>
+            <div class="kpi-icon" style="background:var(--purple-gradient)">
+              <i data-lucide="zap" style="width:20px;height:20px"></i>
+            </div>
+          </div>
+          <div class="kpi-val" id="kpi-speed-val">—</div>
+          <div class="kpi-sub" id="kpi-speed-hours">Отработано: —</div>
+          <div class="progress-track">
+            <div id="kpi-speed-bar" class="progress-fill" style="background:#8b5cf6;width:80%"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 2 Column Grid -->
+      <section class="grid-2col">
+        <!-- Chart Card -->
+        <div class="card">
+          <div class="card-title">
+            <span>📊 Анализ профиля операций</span>
+          </div>
+          <div class="chart-box">
+            <canvas id="opsChart"></canvas>
+          </div>
+        </div>
+
+        <!-- Key Metrics Table Card -->
+        <div class="card">
+          <div class="card-title">
+            <span>⚙️ Основные показатели</span>
+          </div>
+          <div class="table-wrapper">
+            <table>
+              <tbody id="core-metrics-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- Full Operations Detail Table -->
+      <section class="card">
+        <div class="card-title">
+          <span>📋 Полный список всех операций сотрудника</span>
+        </div>
+        <div class="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>Наименование операции</th>
+                <th>Раздел (Тип)</th>
+                <th>Количество</th>
+                <th>Доля (%)</th>
+                <th>Время (минут)</th>
+              </tr>
+            </thead>
+            <tbody id="all-ops-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Discipline Section -->
+      <section id="discipline-section" class="discipline-card" style="display:none">
+        <div class="discipline-header">
+          <div class="discipline-icon">⚠️</div>
+          <div>
+            <div class="discipline-title">Дисциплинарное Взыскание</div>
+            <div class="discipline-subtitle">На сотрудника наложено дисциплинарное взыскание</div>
+          </div>
+        </div>
+        <div class="discipline-grid" id="discipline-grid">
+          <!-- Populated by JS -->
+        </div>
+      </section>
+
+    </div>
+
+  </main>
+
+  <script>
+    const urlParams = new URLSearchParams(window.location.search);
+    const cashierId = urlParams.get('id');
+    const baseApi = window.location.origin;
+
+    const nf = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 });
+
+    // Preserve back link filters
+    const backLink = document.querySelector('.back-link');
+    if (backLink) {
+      const p = new URLSearchParams(window.location.search);
+      p.delete('id');
+      const q = p.toString();
+      backLink.setAttribute('href', `/dashboard/cashiers.html${q ? '?' + q : ''}`);
+    }
+
+    if (!cashierId) {
+      showError('ID кассира не указан. Пожалуйста, выберите кассира из списка.');
+    } else {
+      fetchCashierDetail(cashierId);
+    }
+
+    async function fetchCashierDetail(id) {
+      try {
+        const resp = await fetch(`${baseApi}/api/cashiers/${id}`);
+        if (!resp.ok) {
+          throw new Error('Данные кассира не найдены.');
+        }
+        const data = await resp.json();
+        renderCashierProfile(data);
+      } catch (err) {
+        showError(err.message);
+      }
+    }
+
+    function showError(msg) {
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('content').style.display = 'none';
+      document.getElementById('error-card').style.display = 'block';
+      document.getElementById('error-msg').textContent = msg;
+    }
+
+    function renderCashierProfile(x) {
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('content').style.display = 'flex';
+
+      // Page Title
+      document.title = `${x.full_name} — Профиль кассира`;
+
+      // Hero Elements
+      const initials = (x.full_name || '').split(' ').slice(0, 2).map(n => n[0] || '').join('').toUpperCase() || 'K';
+      document.getElementById('avatar').textContent = initials;
+      document.getElementById('full-name').textContent = x.full_name;
+
+      // Role & Branch Badges
+      const roleBadge = document.getElementById('role-badge');
+      if (x.cashier_type === 'front') {
+        roleBadge.className = 'badge-item badge-role-front';
+        roleBadge.textContent = '💳 ФРОНТ-кассир';
+      } else if (x.cashier_type === 'back') {
+        roleBadge.className = 'badge-item badge-role-back';
+        roleBadge.textContent = '💼 БЭК-кассир';
+      } else {
+        roleBadge.className = 'badge-item badge-branch';
+        roleBadge.textContent = 'Нет операций';
+      }
+
+      document.getElementById('branch-badge').textContent = `🏛️ ${cleanBranchName(x.branch_name)}`;
+
+      // HR Banner
+      const hrBanner = document.getElementById('hr-banner');
+      const sc = x.hr_status_code;
+      if (x.replacing_full_name) {
+        hrBanner.style.display = 'flex';
+        hrBanner.style.background = '#fef3c7';
+        hrBanner.style.color = '#92400e';
+        hrBanner.style.border = '1px solid #fde68a';
+        hrBanner.innerHTML = `🟡 <b>Временный замещающий:</b> ${escapeHtml(x.full_name)} временно замещает штатную единицу: <b>${escapeHtml(x.replacing_full_name)}</b>`;
+      } else if (x.replaced_by_full_name) {
+        hrBanner.style.display = 'flex';
+        hrBanner.style.background = '#f3e8ff';
+        hrBanner.style.color = '#6b21a8';
+        hrBanner.style.border = '1px solid #e9d5ff';
+        hrBanner.innerHTML = `🟣 <b>В декрете / отпуске (Замещение есть):</b> На месте сотрудника временно работает <b>${escapeHtml(x.replaced_by_full_name)}</b>`;
+      } else if (sc !== 'active' && sc !== 'vacant' && !x.has_replacement) {
+        hrBanner.style.display = 'flex';
+        hrBanner.style.background = '#fee2e2';
+        hrBanner.style.color = '#991b1b';
+        hrBanner.style.border = '1px solid #fca5a5';
+        hrBanner.innerHTML = `🔴 <b>⚠️ Внимание: Замещение отсутствует!</b> Сотрудник в декрете/отпуске, но временный замещающий <b>не назначен</b>.`;
+      } else {
+        hrBanner.style.display = 'none';
+      }
+
+      // Meta Grid
+      document.getElementById('meta-tab').textContent = x.tab_number || '—';
+      document.getElementById('meta-emp').textContent = x.employee_number || '—';
+      document.getElementById('meta-pos').textContent = x.position || '—';
+      document.getElementById('meta-days').textContent = `${x.days_worked || 0} дн. (${x.days_worked_pct || 0}% от нормы)`;
+
+      // KPI Highlight Cards
+      document.getElementById('kpi-bek-front-val').textContent = `${x.bek_pct || 0}% / ${x.front_pct || 0}%`;
+      document.getElementById('kpi-bek-front-sub').textContent = `${nf.format(x.bek_count || 0)} БЭК · ${nf.format(x.front_count || 0)} ФРОНТ`;
+      document.getElementById('kpi-bek-bar').style.width = `${Math.min(Number(x.bek_pct || 0), 100)}%`;
+
+      document.getElementById('kpi-ops-val').textContent = nf.format(x.operations_count);
+      document.getElementById('kpi-ops-perday').textContent = `В день в среднем: ${x.operations_per_day || 0} опер.`;
+      document.getElementById('kpi-ops-bar').style.width = x.operations_count > 0 ? '100%' : '0%';
+
+      document.getElementById('kpi-load-val').textContent = `${x.load_percent || 0}%`;
+      if (x.load_percent > 100) {
+        document.getElementById('kpi-load-sub').innerHTML = `<span style="color:#dc2626;font-weight:800">🔥 +${(x.load_percent - 100).toFixed(1)}% превышение нагрузки</span>`;
+      } else {
+        document.getElementById('kpi-load-sub').textContent = `От нормы: ${x.load_percent || 0}%`;
+      }
+      document.getElementById('kpi-load-bar').style.width = `${Math.min(x.load_percent, 100)}%`;
+
+      document.getElementById('kpi-speed-val').textContent = `${x.avg_seconds_per_operation || 0} сек.`;
+      document.getElementById('kpi-speed-hours').textContent = `Всего: ${x.hours_str || '0 ч 0 мин'}`;
+
+      const coreTbody = document.getElementById('core-metrics-body');
+      const discRowHTML = x.has_discipline ? `
+        <tr>
+          <th style="background:#fff1f2;color:#be123c">⚠️ Дисциплинарное взыскание</th>
+          <td style="background:#fff1f2">
+            <div style="display:flex;flex-direction:column;gap:4px">
+              ${x.discipline_type ? `<div><span style="font-weight:700;color:#9f1239">📋 Вид:</span> <span style="color:#7f1d1d;font-weight:600">${escapeHtml(x.discipline_type)}</span></div>` : ''}
+              ${x.discipline_date_order ? `<div><span style="font-weight:700;color:#9f1239">📅 Дата/Приказ:</span> <span style="color:#7f1d1d;font-weight:600">${escapeHtml(x.discipline_date_order)}</span></div>` : ''}
+              ${x.discipline_reason ? `<div style="margin-top:4px"><span style="font-weight:700;color:#9f1239">💬 Причина:</span> <span style="color:#7f1d1d;font-weight:600;white-space:normal;line-height:1.5">${escapeHtml(x.discipline_reason)}</span></div>` : ''}
+            </div>
+          </td>
+        </tr>` : '';
+
+      coreTbody.innerHTML = `
+        <tr>
+          <th>Статус HR</th>
+          <td><b>${escapeHtml(x.hr_status_label || '🟢 Работает')}</b></td>
+        </tr>
+        <tr>
+          <th>Филиал / ЦБУ</th>
+          <td>${escapeHtml(cleanBranchName(x.branch_name) || 'Не указан')}</td>
+        </tr>
+        <tr>
+          <th>Отработанное время</th>
+          <td><b>${nf.format(x.operations_minutes)} минут</b> (${x.hours_str || ''})</td>
+        </tr>
+        <tr>
+          <th>БЭК-операции</th>
+          <td><b>${nf.format(x.bek_count)}</b> (${x.bek_pct || 0}%) / ${nf.format(x.bek_minutes)} мин</td>
+        </tr>
+        <tr>
+          <th>ФРОНТ-операции</th>
+          <td><b>${nf.format(x.front_count)}</b> (${x.front_pct || 0}%) / ${nf.format(x.front_minutes)} мин</td>
+        </tr>
+        <tr>
+          <th>Среднее время</th>
+          <td>${x.avg_seconds_per_operation} сек. (на 1 операцию)</td>
+        </tr>
+        ${discRowHTML}
+      `;
+
+      // All Operations Detailed Table
+      const mList = x.metrics || [];
+      const allOpsTbody = document.getElementById('all-ops-body');
+      if (mList.length === 0) {
+        allOpsTbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:24px">Данные об операциях отсутствуют</td></tr>`;
+      } else {
+        allOpsTbody.innerHTML = mList.map(m => {
+          const isFront = m.section.includes('ФРОНТ');
+          const badgeClass = isFront ? 'badge-role-front' : 'badge-role-back';
+          return `
+            <tr>
+              <td><b>${escapeHtml(m.name)}</b></td>
+              <td><span class="badge-item ${badgeClass}">${m.section}</span></td>
+              <td><b>${nf.format(m.count)}</b></td>
+              <td><b style="color:var(--primary)">${m.pct}%</b></td>
+              <td>${nf.format(m.minutes)} мин</td>
+            </tr>
+          `;
+        }).join('');
+      }
+
+      // Discipline Section Rendering
+      const disciplineSection = document.getElementById('discipline-section');
+      const disciplineGrid = document.getElementById('discipline-grid');
+      if (x.has_discipline && disciplineSection && disciplineGrid) {
+        disciplineSection.style.display = 'block';
+
+        let fieldsHTML = '';
+
+        if (x.discipline_type) {
+          fieldsHTML += `
+            <div class="discipline-field">
+              <div class="discipline-field-label">📋 Вид взыскания</div>
+              <div class="discipline-field-val">${escapeHtml(x.discipline_type)}</div>
+            </div>`;
+        }
+
+        if (x.discipline_date_order) {
+          fieldsHTML += `
+            <div class="discipline-field">
+              <div class="discipline-field-label">📅 Дата и номер приказа</div>
+              <div class="discipline-field-val">${escapeHtml(x.discipline_date_order)}</div>
+            </div>`;
+        }
+
+        if (x.discipline_reason) {
+          fieldsHTML += `
+            <div class="discipline-field" style="grid-column: 1 / -1;">
+              <div class="discipline-field-label">💬 Причина взыскания</div>
+              <div class="discipline-field-val" style="white-space:pre-wrap;line-height:1.6">${escapeHtml(x.discipline_reason)}</div>
+            </div>`;
+        }
+
+        disciplineGrid.innerHTML = fieldsHTML;
+      } else if (disciplineSection) {
+        disciplineSection.style.display = 'none';
+      }
+
+      // Safe Chart Render
+      try {
+        const topM = mList.slice(0, 10);
+        if (topM.length > 0) {
+          const ctx = document.getElementById('opsChart').getContext('2d');
+          new Chart(ctx, {
+            type: 'bar',
+            data: {
+              labels: topM.map(m => shortenOpName(m.name)),
+              datasets: [{
+                label: 'Количество операций',
+                data: topM.map(m => m.count),
+                backgroundColor: topM.map(m => m.section.includes('ФРОНТ') ? '#3b82f6' : '#8b5cf6'),
+                borderRadius: 8
+              }]
+            },
+            options: {
+              indexAxis: 'y',
+              responsive: true,
+              maintainAspectRatio: false,
+              layout: {
+                padding: { left: 10, right: 20, top: 10, bottom: 10 }
+              },
+              plugins: {
+                legend: { display: false },
+                tooltip: {
+                  callbacks: {
+                    title: (items) => topM[items[0].dataIndex].name,
+                    label: (c) => ` ${nf.format(c.parsed.x)} опер. (${topM[c.dataIndex].pct}%)`
+                  }
+                }
+              },
+              scales: {
+                x: {
+                  grid: { color: '#f1f5f9' },
+                  ticks: { font: { family: 'Inter', size: 11 } }
+                },
+                y: {
+                  grid: { display: false },
+                  ticks: {
+                    font: { family: 'Inter', size: 11, weight: '600' },
+                    color: '#334155'
+                  }
+                }
+              }
+            }
+          });
+        }
+      } catch(e) {
+        console.warn('Ops chart render error:', e);
+      }
+
+      // Initialize icons
+      if (window.lucide) lucide.createIcons();
+    }
+
+    function shortenOpName(name) {
+      if (!name) return '';
+      let s = String(name).trim();
+      s = s.replace(/\s*\([\d,.]+\)$/, '');
+      s = s.replace(/Назоратчи кассир ролини бажарганда/i, 'Роль контроллера-кассира');
+      s = s.replace(/Кирим,\s*чиқим\s*хужжатини\s*текшириш,?\s*тасдиқлаш/i, 'Проверка прих./расх. док.');
+      s = s.replace(/Коммунал\s*туловлар\s*\(кирим-чиқим\)/i, 'Коммунальные платежи');
+      s = s.replace(/Амалга\s*оширилган\s*операциялар\s*сони\s*\(кирим-чиқим\)/i, 'Прих.-расх. операции');
+      s = s.replace(/ВАШ\s*(\d+[^\)]*)\s*\(сотиш-сотиб олиш\)/i, 'ВАШ $1');
+      s = s.replace(/Пластикдан\s*нақд\s*пул\s*ечиш/i, 'Снятие с карты');
+      s = s.replace(/Банкоматга\s*пул\s*кўйиш/i, 'БЭК-операция (касса)');
+      return s.trim();
+    }
+  </script>
+</body>
+</html>

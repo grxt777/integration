@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Cashier Intelligence — Аналитика кассиров</title>
+  
+  <!-- Fonts & Libraries -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@600;700;850&display=swap" rel="stylesheet">
+  <script src="/dashboard/js/utils.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+
+  <link rel="stylesheet" href="/dashboard/css/cashiers.css">
+</head>
+<body>
+
+  <!-- Header -->
+  <header>
+    <div style="display:flex;align-items:center;gap:12px">
+      <div class="brand-logo">
+        <i data-lucide="users-round" style="width:20px;height:20px"></i>
+      </div>
+      <div>
+        <div class="brand-title">Cashier Intelligence</div>
+        <div class="status-badge">
+          <span class="status-dot"></span> System Active
+        </div>
+      </div>
+    </div>
+
+    <div class="header-nav">
+      <a class="nav-btn" href="/dashboard/index.html">
+        <i data-lucide="home" style="width:16px;height:16px"></i> Главная
+      </a>
+      <a class="nav-btn" href="/dashboard/map.html">
+        <i data-lucide="map" style="width:16px;height:16px"></i> Карта ATM
+      </a>
+      <a class="nav-btn primary" href="/dashboard/import.html">
+        <i data-lucide="upload-cloud" style="width:16px;height:16px"></i> Импорт отчётов
+      </a>
+      <button class="nav-btn reset-btn" onclick="resetAllFilters()" title="Сбросить все выбранные фильтры">
+        <i data-lucide="rotate-ccw" style="width:16px;height:16px"></i> Сбросить фильтры
+      </button>
+      <a class="nav-btn" href="/docs" target="_blank">
+        <i data-lucide="code" style="width:16px;height:16px"></i> API Docs
+      </a>
+    </div>
+  </header>
+
+  <!-- Main Content Wrap -->
+  <main class="wrap">
+
+    <!-- Hero Card -->
+    <section class="hero-card">
+      <div class="hero-content">
+        <h2>Аналитика работы кассиров</h2>
+        <p>Интеллектуальная система учёта KPI, оценки нагрузки (%), структуры выполненных операций и штатных статусов кассиров коммерческого банка.</p>
+      </div>
+
+      <div class="hero-actions">
+        <a href="/dashboard/import.html" class="action-card">
+          <div class="action-icon green"><i data-lucide="upload-cloud"></i></div>
+          <div>
+            <div class="action-title">Единый Импорт Отчётов</div>
+            <div class="action-sub">Загрузка KPI и штата кассиров в 1 клик</div>
+          </div>
+          <i data-lucide="chevron-right" style="margin-left:auto;color:#64748b;width:18px;height:18px"></i>
+        </a>
+      </div>
+    </section>
+
+    <!-- Active Report Banner Notice -->
+    <div class="notice-banner" id="notice">
+      <i data-lucide="info" style="width:18px;height:18px;color:#059669;flex-shrink:0"></i>
+      <span id="notice-text">Загрузка последних данных…</span>
+    </div>
+
+    <!-- KPI Metrics Grid (6 Columns) -->
+    <section class="kpi-grid">
+      <div class="kpi-card highlight">
+        <div class="kpi-head">
+          <span class="kpi-title" id="lbl-cash">Всего кассиров</span>
+          <div class="kpi-icon"><i data-lucide="users"></i></div>
+        </div>
+        <div class="kpi-value" id="k-cash">—</div>
+        <div class="kpi-sub">В текущей выборке</div>
+      </div>
+
+      <div class="kpi-card">
+        <div class="kpi-head">
+          <span class="kpi-title">БЭК / ФРОНТ</span>
+          <div class="kpi-icon" style="background:#eff6ff;color:#2563eb"><i data-lucide="split"></i></div>
+        </div>
+        <div class="kpi-value" id="k-bek-front" style="color:#2563eb;font-size:22px">—</div>
+        <div class="kpi-sub" id="k-bek-front-sub">Операции по ролям</div>
+      </div>
+
+      <div class="kpi-card">
+        <div class="kpi-head">
+          <span class="kpi-title">Средняя нагрузка</span>
+          <div class="kpi-icon" style="background:#ecfdf5;color:#059669"><i data-lucide="zap"></i></div>
+        </div>
+        <div class="kpi-value" id="k-load" style="color:#059669">— %</div>
+        <div class="kpi-sub">Норма рабочего времени</div>
+      </div>
+
+      <div class="kpi-card">
+        <div class="kpi-head">
+          <span class="kpi-title">Работают / В декрете</span>
+          <div class="kpi-icon" style="background:#f5f3ff;color:#7c3aed"><i data-lucide="user-check"></i></div>
+        </div>
+        <div class="kpi-value" id="k-status-stat" style="font-size:22px">—</div>
+        <div class="kpi-sub">Активный штат / Отсутствия</div>
+      </div>
+
+      <div class="kpi-card warning" onclick="setStatus('no_replacement')" style="cursor:pointer;" title="Нажмите, чтобы отфильтровать сотрудников без замены">
+        <div class="kpi-head">
+          <span class="kpi-title">Без замены (Внимание!)</span>
+          <div class="kpi-icon" style="background:#fef2f2;color:#dc2626"><i data-lucide="alert-triangle"></i></div>
+        </div>
+        <div class="kpi-value" id="k-noreplace" style="color:#dc2626">—</div>
+        <div class="kpi-sub">Ставка пустая — нет временной замены</div>
+      </div>
+
+      <div class="kpi-card" onclick="setStatus('disciplined')" style="cursor:pointer;" title="Нажмите, чтобы отфильтровать сотрудников с взысканиями">
+        <div class="kpi-head">
+          <span class="kpi-title">Взыскания</span>
+          <div class="kpi-icon" style="background:#fff1f2;color:#be123c"><i data-lucide="shield-alert"></i></div>
+        </div>
+        <div class="kpi-value" id="k-disciplined" style="color:#be123c">—</div>
+        <div class="kpi-sub">Сотрудники со взысканиями</div>
+      </div>
+
+      <div class="kpi-card">
+        <div class="kpi-head">
+          <span class="kpi-title">Операции & Часы</span>
+          <div class="kpi-icon" style="background:#fff7ed;color:#d97706"><i data-lucide="clock"></i></div>
+        </div>
+        <div class="kpi-value" id="k-ops-summary" style="font-size:20px;color:#d97706">—</div>
+        <div class="kpi-sub" id="k-hours-sub">Выполнено всего</div>
+      </div>
+    </section>
+
+    <!-- Toolbar Filters Card -->
+    <section class="toolbar-card">
+      <!-- Row 1: Search & Position Dropdown -->
+      <div class="search-row">
+        <div class="search-input-box">
+          <i data-lucide="search" style="color:var(--text-muted);width:18px;height:18px"></i>
+          <input type="text" id="search-input" placeholder="Поиск кассира по ФИО, должности, филиалу, табелю или статусу…" oninput="onSearchInput()" onkeydown="if(event.key==='Enter') executeSearch()">
+          <button class="clear-search-btn" id="clear-search-btn" onclick="clearSearch()" title="Очистить поиск">✕</button>
+        </div>
+
+        <button class="nav-btn primary" onclick="executeSearch()" style="height:46px;padding:0 20px">
+          🔍 Найти
+        </button>
+
+        <select id="position-select" class="position-select" onchange="onPositionSelect()">
+          <option value="">Все должности</option>
+        </select>
+
+        <select id="branch-select" class="position-select" onchange="onBranchSelect()" style="min-width:220px;border-color:#a7f3d0">
+          <option value="">🏛️ Все филиалы / БХМ</option>
+        </select>
+      </div>
+
+      <!-- Row 2: Role Pills -->
+      <div class="filter-group">
+        <span class="filter-label">Роль кассира:</span>
+        <button class="pill-btn role active" data-role="" onclick="setRole('')">Все кассиры</button>
+        <button class="pill-btn role" data-role="back" onclick="setRole('back')">💼 БЭК-кассиры</button>
+        <button class="pill-btn role" data-role="front" onclick="setRole('front')">💳 ФРОНТ-кассиры</button>
+      </div>
+
+      <!-- Row 3: HR Status Pills -->
+      <div class="filter-group">
+        <span class="filter-label">HR-статус:</span>
+        <button class="st-pill active" data-status="" onclick="setStatus('')" style="background:#f1f5f9;color:#334155;border-color:#cbd5e1">Все статусы</button>
+        <button class="st-pill" data-status="active" onclick="setStatus('active')" style="background:#dcfce7;color:#166534;border-color:#bbf7d0">🟢 Работают</button>
+        <button class="st-pill" data-status="vacation" onclick="setStatus('vacation')" style="background:#e0f2fe;color:#075985;border-color:#bae6fd">🔵 В отпуске</button>
+        <button class="st-pill" data-status="maternity" onclick="setStatus('maternity')" style="background:#f3e8ff;color:#6b21a8;border-color:#e9d5ff">🟣 В декрете</button>
+        <button class="st-pill" data-status="temporary" onclick="setStatus('temporary')" style="background:#fef3c7;color:#92400e;border-color:#fde68a">🟡 Временные замещения</button>
+        <button class="st-pill" data-status="no_replacement" onclick="setStatus('no_replacement')" style="background:#fee2e2;color:#991b1b;border-color:#fca5a5">🔴 Без замены (Внимание)</button>
+        <button class="st-pill" data-status="vacant" onclick="setStatus('vacant')" style="background:#f1f5f9;color:#475569;border-color:#cbd5e1">⚪ Вакантные ставки</button>
+        <button class="st-pill" data-status="disciplined" onclick="setStatus('disciplined')" style="background:#fff1f2;color:#be123c;border-color:#fecdd3">⚠️ С взысканием</button>
+      </div>
+    </section>
+
+    <!-- Charts Section -->
+    <section class="charts-grid">
+      <div class="chart-card">
+        <div class="chart-head">
+          <h3 id="chart-top-title">Топ 10 кассиров по операциям</h3>
+          <div id="pos-top-tabs" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+        </div>
+        <div class="chart-container"><canvas id="top"></canvas></div>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-head">
+          <h3 id="chart-cats-title">Структура выполненных операций (%)</h3>
+          <div id="cats-view-tabs" style="display:flex;gap:6px;flex-wrap:wrap">
+            <button id="btn-cats-chart" class="pill-btn active" style="padding:4px 10px;font-size:11px" onclick="setCatsView('chart')">📊 Диаграмма</button>
+            <button id="btn-cats-table" class="pill-btn" style="padding:4px 10px;font-size:11px" onclick="setCatsView('table')">📋 Табличный вид</button>
+            <button class="pill-btn" style="padding:4px 10px;font-size:11px;background:#eff6ff;color:#2563eb;border-color:#bfdbfe" onclick="openCatsExpandModal()" title="Открыть в полном окне / Увеличить">🔍 Увеличить</button>
+          </div>
+        </div>
+        <div id="cats-chart-view" class="chart-container"><canvas id="cats"></canvas></div>
+        <div id="cats-table-view" class="chart-container" style="display:none; overflow-y:auto; overflow-x:auto; max-width:100%; padding-right:4px;">
+          <table style="width:100%; border-collapse:collapse; font-size:12px; table-layout:fixed;">
+            <thead>
+              <tr style="border-bottom:2px solid #e2e8f0; text-align:left; color:#64748b; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.03em;">
+                <th style="padding:8px 4px; width:28px; vertical-align:middle;">№</th>
+                <th style="padding:8px 6px; vertical-align:middle;">Наименование операции</th>
+                <th style="padding:8px 6px; text-align:right; width:95px; vertical-align:middle;">Количество</th>
+                <th style="padding:8px 6px; text-align:right; width:105px; vertical-align:middle;">Время</th>
+                <th style="padding:8px 6px; text-align:right; width:85px; vertical-align:middle;">Доля %</th>
+              </tr>
+            </thead>
+            <tbody id="cats-table-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- Main Cashiers Data Table -->
+    <section class="table-card">
+      <div class="table-head">
+        <h3>Кассиры: операции и нагрузка</h3>
+        <span class="status-badge" style="background:#eff6ff;color:#1d4ed8;border-color:#bfdbfe">
+          Live Data Sync
+        </span>
+      </div>
+
+      <div class="table-responsive">
+        <table>
+          <thead>
+            <tr>
+              <th>Кассир</th>
+              <th>Роль / HR-Статус</th>
+              <th>БХМ Номи / Должность</th>
+              <th>Отработано дней</th>
+              <th>Всего операций</th>
+              <th>Нагрузка %</th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+
+      <!-- Advanced Pagination Container -->
+      <div class="pagination-container">
+        <div class="pagination-info">
+          <span id="pagination-info-text">Загрузка данных...</span>
+          <div style="display:flex;align-items:center;gap:6px">
+            <span>Показывать по:</span>
+            <select class="pagination-size-select" id="page-size-select" onchange="setPageSize(this.value)">
+              <option value="10">10</option>
+              <option value="25" selected>25</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+              <option value="200">200</option>
+            </select>
+          </div>
+        </div>
+
+        <div style="display:flex;align-items:center;flex-wrap:wrap;gap:10px">
+          <div class="pagination-controls" id="pagination-buttons"></div>
+          <div class="page-jump-container">
+            <span>Перейти:</span>
+            <input type="number" id="page-jump-input" class="page-jump-input" min="1" onkeydown="if(event.key==='Enter') goToPage(this.value)">
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Cashier Detail Modal Dialog -->
+  <div class="modal-overlay" id="detail-modal" onclick="closeModalOnOverlay(event)">
+    <div class="modal-card">
+      <button class="modal-close" onclick="closeModal()">✕</button>
+
+      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+        <span id="m-role-badge" class="badge-role badge-universal">Универсальный</span>
+        <span id="m-hr-status-badge" style="font-size:12px;font-weight:700;padding:4px 10px;border-radius:99px;background:#dcfce7;color:#166534">🟢 Работает</span>
+        <span class="muted" id="m-meta">№ сотрудника: — · Табель: —</span>
+      </div>
+
+      <div id="m-hr-banner" style="display:none;margin-top:14px;padding:12px 16px;border-radius:12px;font-size:13px;line-height:1.5"></div>
+      
+      <h2 id="m-name" style="margin:12px 0 4px;font-size:24px;font-weight:850">—</h2>
+      <div id="m-pos" style="color:#475569;font-weight:700;font-size:15px">—</div>
+      <div id="m-branch-str" style="color:#64748b;font-size:13px;margin-top:2px">Филиал: —</div>
+
+      <div class="modal-kpi-grid">
+        <div class="modal-kpi">
+          <div style="font-size:11px;color:#64748b;font-weight:800;text-transform:uppercase">БЭК / ФРОНТ</div>
+          <div id="m-bek-front-val" style="font-size:20px;font-weight:850;color:#2563eb;margin-top:4px">—</div>
+          <small id="m-bek-front-grade" class="muted">—</small>
+        </div>
+        <div class="modal-kpi">
+          <div style="font-size:11px;color:#64748b;font-weight:800;text-transform:uppercase">Всего операций</div>
+          <div id="m-ops-val" style="font-size:24px;font-weight:850;margin-top:4px">—</div>
+          <small id="m-ops-daily" class="muted">—</small>
+        </div>
+        <div class="modal-kpi">
+          <div style="font-size:11px;color:#64748b;font-weight:800;text-transform:uppercase">Рабочее время</div>
+          <div id="m-hours-val" style="font-size:24px;font-weight:850;margin-top:4px">—</div>
+          <small id="m-days-val" class="muted">—</small>
+        </div>
+        <div class="modal-kpi">
+          <div style="font-size:11px;color:#64748b;font-weight:800;text-transform:uppercase">Нагрузка %</div>
+          <div id="m-load-val" style="font-size:24px;font-weight:850;margin-top:4px">—</div>
+          <small id="m-speed-val" class="muted">—</small>
+        </div>
+      </div>
+
+      <!-- BEK / FRONT split bar -->
+      <div id="m-split-section" style="margin-top:18px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:14px 18px">
+        <div style="font-size:12px;font-weight:800;color:#475569;margin-bottom:10px">БЭК / ФРОНТ — операциялар нисбати:</div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <span id="m-bek-lbl" style="font-size:13px;font-weight:800;color:#7c3aed;min-width:80px">БЭК: —</span>
+          <div style="flex:1;height:12px;background:#e2e8f0;border-radius:6px;overflow:hidden;position:relative">
+            <div id="m-bek-bar" style="height:100%;background:#7c3aed;width:0%;transition:width 0.4s ease;border-radius:6px"></div>
+          </div>
+          <span id="m-front-lbl" style="font-size:13px;font-weight:800;color:#0369a1;min-width:90px;text-align:right">ФРОНТ: —</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;margin-top:8px">
+          <span id="m-bek-cnt" style="font-size:11px;color:#64748b">—</span>
+          <span id="m-front-cnt" style="font-size:11px;color:#64748b">—</span>
+        </div>
+      </div>
+
+      <div style="margin-top:24px">
+        <h3 style="margin:0 0 12px;font-size:16px;font-weight:800">Распределение выполненных операций (%)</h3>
+        <div style="height:260px"><canvas id="modal-chart"></canvas></div>
+      </div>
+
+      <div style="margin-top:24px">
+        <h3 style="margin:0 0 12px;font-size:16px;font-weight:800">Подробные показатели по всем операциям</h3>
+        <div style="overflow-x:auto">
+          <table style="width:100%">
+            <thead>
+              <tr>
+                <th>Операция</th>
+                <th>Раздел</th>
+                <th>Количество</th>
+                <th>Доля (%)</th>
+                <th>Минут</th>
+              </tr>
+            </thead>
+            <tbody id="m-table-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Operations Structure Fullscreen / Expand Modal Dialog -->
+  <div class="modal-overlay" id="cats-expand-modal" onclick="closeCatsExpandModalOnOverlay(event)">
+    <div class="modal-card" style="width:min(1200px, 96vw); max-height:92vh; display:flex; flex-direction:column; padding:28px;">
+      <button class="modal-close" onclick="closeCatsExpandModal()">✕</button>
+
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:20px; padding-right:44px; flex-wrap:wrap; gap:12px;">
+        <h2 id="cats-expand-title" style="font-size:20px; font-weight:850; color:#0f172a; margin:0;">📊 Структура выполненных операций (%)</h2>
+        <div style="display:flex; gap:6px; background:#f1f5f9; padding:4px; border-radius:12px;">
+          <button id="btn-cats-expand-both" class="pill-btn active" style="padding:5px 12px; font-size:12px" onclick="setCatsExpandView('both')">⚡ 2 в 1 (Сводка)</button>
+          <button id="btn-cats-expand-chart" class="pill-btn" style="padding:5px 12px; font-size:12px" onclick="setCatsExpandView('chart')">📊 Диаграмма</button>
+          <button id="btn-cats-expand-table" class="pill-btn" style="padding:5px 12px; font-size:12px" onclick="setCatsExpandView('table')">📋 Таблица</button>
+        </div>
+      </div>
+
+      <div id="cats-expand-layout-grid" style="display:grid; grid-template-columns:1fr 1.2fr; gap:24px; flex:1; min-height:0; overflow-y:auto;">
+        <div id="cats-expand-chart-box" style="position:relative; height:440px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:16px; padding:16px;">
+          <canvas id="cats-expand-canvas"></canvas>
+        </div>
+        <div id="cats-expand-table-box" style="overflow-y:auto; max-height:500px; padding-right:4px;">
+          <table style="width:100%; border-collapse:collapse; font-size:12px; table-layout:fixed;">
+            <thead>
+              <tr style="border-bottom:2px solid #e2e8f0; text-align:left; color:#64748b; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.03em;">
+                <th style="padding:8px 4px; width:24px; vertical-align:middle;">№</th>
+                <th style="padding:8px 6px; vertical-align:middle;">Наименование операции</th>
+                <th style="padding:8px 6px; text-align:right; width:90px; vertical-align:middle;">Количество</th>
+                <th style="padding:8px 6px; text-align:right; width:95px; vertical-align:middle;">Время</th>
+                <th style="padding:8px 6px; text-align:right; width:75px; vertical-align:middle;">Доля %</th>
+              </tr>
+            </thead>
+            <tbody id="cats-expand-table-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/dashboard/js/cashiers.js"></script>
+</body>
+</html>
