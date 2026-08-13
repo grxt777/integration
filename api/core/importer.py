@@ -426,22 +426,35 @@ BRANCH_HEADER_ALIASES: Dict[str, str] = {
     "no": "number",
     "n": "number",
     "номер": "number",
-    "": "number",
 
-    # Локал код
+    # Локал код филиала (не путать с МФО головного офиса — 00440 и т.п.)
     "локалкод": "local_code",
     "локал_код": "local_code",
     "local_code": "local_code",
     "localcode": "local_code",
     "локал": "local_code",
+    "кодфилиала": "local_code",
+    "филиалкод": "local_code",
 
-    # Регион
+    # Название БХМ / филиала
+    "бхмбхономи": "name",
+    "бхмноми": "name",
+    "бхономи": "name",
+    "филиалноми": "name",
+    "номифилиала": "name",
+
+    # Регион / расположение
     "регион": "region",
     "region": "region",
     "область": "region",
     "худуд": "region",
+    "худудноми": "region",
+    "регионноми": "region",
+    "вилоятноми": "region",
     "viloyat": "region",
     "вилоят": "region",
+    "жойлашуви": "region",
+    "жойлашув": "region",
 
     # Адрес
     "адрес": "address",
@@ -449,16 +462,33 @@ BRANCH_HEADER_ALIASES: Dict[str, str] = {
     "манзили": "address",
     "манзил": "address",
     "manzil": "address",
+    "филиалманзили": "address",
+    "адресфилиала": "address",
+    "бхмбхоманзили": "address",
+    "бхмманзили": "address",
 
-    # Lat
-    "lat": "lat",
+    # Lat / Lon — те же синонимы, что и у ATM (в т.ч. две колонки «Геолокация»)
+    "геолокация(alt)": "lat",
+    "геолокация_alt": "lat",
+    "геолокация(лат)": "lat",
+    "геолокация(широта)": "lat",
+    "геолокацияalt": "lat",
+    "геолокацияlat": "lat",
+    "геолокация": "lat",
+    "координата": "lat",
+    "координаты": "lat",
+    "alt": "lat",
     "latitude": "lat",
+    "lat": "lat",
     "широта": "lat",
-
-    # Lon
-    "lon": "lon",
+    "геолокация(long)": "lon",
+    "геолокация_long": "lon",
+    "геолокация(долгота)": "lon",
+    "геолокацияlong": "lon",
+    "геолокацияlon": "lon",
     "long": "lon",
     "longitude": "lon",
+    "lon": "lon",
     "lng": "lon",
     "долгота": "lon",
 
@@ -466,21 +496,60 @@ BRANCH_HEADER_ALIASES: Dict[str, str] = {
     "инкассация": "incassation",
     "incassation": "incassation",
     "инкассацио": "incassation",
+    "инкассация1выезд": "incassation",
 }
 
 BRANCH_REQUIRED_FIELDS = ("local_code",)
 
 
+def _resolve_branch_header(norm: str, taken: set[str]) -> Optional[str]:
+    """Сопоставляет заголовок колонки филиала, в т.ч. по вхождению подстроки."""
+    if not norm:
+        return None
+
+    if norm in BRANCH_HEADER_ALIASES:
+        field = BRANCH_HEADER_ALIASES[norm]
+        if field == "lat" and "lat" in taken and "lon" not in taken:
+            return "lon"
+        if field not in taken:
+            return field
+        return None
+
+    if any(k in norm for k in ("геолокац", "координат", "широт", "latitude")):
+        return "lon" if "lat" in taken else "lat"
+    if any(k in norm for k in ("долгот", "longitude")) and "lon" not in taken:
+        return "lon"
+    # Только явный локал-код филиала. «МФО» головного офиса (00440) — не он.
+    if "локал" in norm and "local_code" not in taken:
+        return "local_code"
+    if any(k in norm for k in ("инкассац", "incassation")) and "incassation" not in taken:
+        return "incassation"
+    if any(k in norm for k in ("манзил", "адрес", "address", "manzil")) and "address" not in taken:
+        return "address"
+    if any(k in norm for k in ("жойлашув", "худуд", "вилоят", "регион", "область")) and "region" not in taken:
+        return "region"
+    if (
+        any(k in norm for k in ("бхмноми", "бхономи", "филиалноми", "бхмбхономи"))
+        or (("бхм" in norm or "бхо" in norm) and "ном" in norm and "манзил" not in norm)
+    ) and "name" not in taken:
+        return "name"
+    return None
+
+
 def _match_branch_headers(ws) -> Tuple[Dict[int, str], int]:
     """
     Аналог _match_headers, но для реестра филиалов.
-    Ожидаемые колонки: № локал код регион адрес lat lon инкассация
+
+    Реальный реестр («Номма-ном») шире 7 колонок: банк, МФО сети, БХМ номи,
+    локал код, дата, жойлашуви, манзил, две колонки «Геолокация», инкассация.
+    Незамапленные колонки нельзя заполнять «по порядку» — из-за этого
+    МФО 00440 становился локал-кодом, а соседний столбец — долготой.
     """
     header_row_idx = None
     for row_idx in range(1, min(6, ws.max_row + 1)):
         row = next(ws.iter_rows(min_row=row_idx, max_row=row_idx, values_only=True))
         normalized = [_normalize_header(c) for c in row]
-        hits = sum(1 for n in normalized if n in BRANCH_HEADER_ALIASES)
+        hits = sum(1 for n in normalized if n and _resolve_branch_header(n, set()))
         if hits >= 3:
             header_row_idx = row_idx
             break
@@ -488,7 +557,6 @@ def _match_branch_headers(ws) -> Tuple[Dict[int, str], int]:
     column_map: Dict[int, str] = {}
 
     if header_row_idx is None:
-        # fallback: позиционный маппинг № локал_код регион адрес lat lon инкассация
         position_map = {
             1: "number",
             2: "local_code",
@@ -510,18 +578,25 @@ def _match_branch_headers(ws) -> Tuple[Dict[int, str], int]:
     )
 
     for col_idx, cell in enumerate(header_row, start=1):
-        norm = _normalize_header(cell)
-        if norm in BRANCH_HEADER_ALIASES:
-            field = BRANCH_HEADER_ALIASES[norm]
-            if field not in column_map.values():
-                column_map[col_idx] = field
+        field = _resolve_branch_header(_normalize_header(cell), set(column_map.values()))
+        if field:
+            column_map[col_idx] = field
 
     if "number" not in column_map.values():
         for col_idx, cell in enumerate(header_row, start=1):
+            if col_idx in column_map:
+                continue
             norm = _normalize_header(cell)
-            if norm in ("", "n", "no", "номер"):
+            if norm in ("n", "no", "номер", "nomer"):
                 column_map[col_idx] = "number"
                 break
+
+    # Вторая колонка «Геолокация» часто без заголовка (объединённая ячейка).
+    if "lat" in column_map.values() and "lon" not in column_map.values():
+        lat_col = next(i for i, f in column_map.items() if f == "lat")
+        next_col = lat_col + 1
+        if next_col <= len(header_row) and next_col not in column_map:
+            column_map[next_col] = "lon"
 
     return column_map, header_row_idx
 
@@ -603,11 +678,26 @@ def parse_branches_xlsx(
             else:
                 record[field] = _parse_str(value)
 
+        name = record.pop("name", None)
+        if name:
+            addr = record.get("address") or ""
+            record["address"] = f"{name}. {addr}".strip(". ") if addr else name
+
         local_code = record.get("local_code")
         if not local_code:
             errors.append({
                 "row": row_idx,
                 "error": "Пустой Локал код",
+            })
+            continue
+
+        # Строка-обломок шапки: «а» / «№» вместо порядкового номера
+        number_val = (record.get("number") or "").strip().lower()
+        if number_val in ("а", "a", "№", "nomer", "номер") and len(local_code) < 4:
+            errors.append({
+                "row": row_idx,
+                "local_code": local_code,
+                "error": "Похоже на строку заголовка, пропущена",
             })
             continue
 
@@ -625,10 +715,15 @@ def parse_branches_xlsx(
 
     wb.close()
 
+    without_coordinates = sum(
+        1 for r in records if r.get("lat") is None or r.get("lon") is None
+    )
+
     return {
         "records": records,
         "errors": errors,
         "total_rows": total_rows,
         "header_row": header_row,
         "columns": {get_column_letter(k): v for k, v in column_map.items()},
+        "without_coordinates": without_coordinates,
     }

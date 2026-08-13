@@ -539,6 +539,7 @@
       color: var(--text) !important;
     }
 
+    .leaflet-routing-container { display: none !important; }
     .leaflet-control-zoom a {
       background: #fff !important;
       color: var(--text) !important;
@@ -869,12 +870,12 @@
 
       <div style="display:flex;gap:6px;margin-bottom:6px;">
         <div style="flex:1;">
-          <div style="font-size:10px;color:#667085;margin-bottom:4px;font-weight:700;">Машин</div>
-          <select id="num-cars" style="width:100%;background:#fff;border:1px solid #e5eaf3;color:#111827;border-radius:12px;padding:8px;font-size:12px;">
-            <option value="1">1 машина</option>
-            <option value="2" selected>2 машины</option>
-            <option value="3">3 машины</option>
-            <option value="4">4 машины</option>
+          <div style="font-size:10px;color:#667085;margin-bottom:4px;font-weight:700;">Макс. ATM / рейс</div>
+          <select id="max-stops" style="width:100%;background:#fff;border:1px solid #e5eaf3;color:#111827;border-radius:12px;padding:8px;font-size:12px;">
+            <option value="8">8 точек</option>
+            <option value="12" selected>12 точек</option>
+            <option value="16">16 точек</option>
+            <option value="99">Без лимита</option>
           </select>
         </div>
         <div style="flex:1;">
@@ -893,14 +894,14 @@
       <button class="btn btn-primary" onclick="buildRoute('warning')" style="margin-bottom:4px;">
         <i data-lucide="route" class="icon-inline"></i> Критичные + предупреждения
       </button>
-      <button class="btn btn-outline" onclick="buildRoute('all')" style="margin-bottom:6px;">
-        Все банкоматы
-      </button>
+      <a class="btn btn-outline" href="/dashboard/incassation.html" style="margin-bottom:6px;text-decoration:none;text-align:center">
+        Календарь маршрутов
+      </a>
       <button class="btn btn-outline" onclick="clearRoute()"><i data-lucide="x" class="icon-inline"></i> Очистить маршрут</button>
 
       <div id="route-info" style="margin-top:8px;padding:10px;background:#f8fafc;border:1px solid #e5eaf3;border-radius:12px;font-size:11px;color:#667085;line-height:1.5;">
-        Депо: <span style="color:#60a5fa">Yunusobod, ул. Амира Темура</span><br>
-        Алгоритм: ML-приоритет → геокластеры → 2-opt
+        Каждый вилоят — только свои филиалы с «Инкассация = 1».<br>
+        Алгоритм: ближайший филиал → NN + 2-opt → возврат в филиал
       </div>
     </div>
   </div>
@@ -1460,7 +1461,7 @@ async function loadBranches() {
     if (branchesLayer) map.removeLayer(branchesLayer);
     branchesLayer = L.layerGroup();
 
-    let withInc = 0, withoutInc = 0;
+    let withInc = 0, withoutInc = 0, plotted = 0;
     branches.forEach(b => {
       const lat = parseFloat(b.lat);
       const lon = parseFloat(b.lon);
@@ -1468,10 +1469,11 @@ async function loadBranches() {
 
       const isInc = !!b.incassation;
       if (isInc) withInc++; else withoutInc++;
+      plotted++;
 
       const marker = L.marker([lat, lon], { icon: makeBranchIcon(isInc) });
       marker.bindPopup(`
-        <div class="popup-title">${appIcon('building-2')}${b.number ? '№' + b.number + ' · ' : ''}${b.local_code || ''}</div>
+        <div class="popup-title">${appIcon('building-2')}${b.local_code || ''}${b.number ? ' · №' + b.number : ''}</div>
         <div class="popup-row">Регион: <span>${b.region || '—'}</span></div>
         <div class="popup-row">Адрес: <span>${b.address || '—'}</span></div>
         <div class="popup-row">Тип: <span style="color:${isInc ? '#7c3aed' : '#64748b'};font-weight:700">
@@ -1481,13 +1483,35 @@ async function loadBranches() {
       branchesLayer.addLayer(marker);
     });
 
+    const skipped = branches.length - plotted;
     document.getElementById('branches-legend-count').textContent =
-      `Инкассаторских: ${withInc} · Обычных: ${withoutInc} · Всего: ${branches.length}`;
+      skipped > 0
+        ? `На карте: ${plotted} · без координат: ${skipped} · всего: ${branches.length}`
+        : `Инкассаторских: ${withInc} · Обычных: ${withoutInc} · Всего: ${branches.length}`;
 
     branchesLoaded = true;
-    console.log(`Loaded ${branches.length} branches (incassation: ${withInc}, regular: ${withoutInc})`);
+    console.log(`Loaded ${branches.length} branches, plotted ${plotted} (incassation: ${withInc}, regular: ${withoutInc})`);
+
+    if (!branches.length) {
+      branchesLoaded = false;
+      alert('В базе нет филиалов. Сначала загрузите реестр через «Импорт филиалов».');
+      return false;
+    }
+    if (!plotted) {
+      branchesLoaded = false;
+      alert(
+        `Филиалы в базе: ${branches.length}, но ни у одного нет координат (широта/долгота).\n\n` +
+        'Поэтому на карте они не отображаются.\n\n' +
+        'Загрузите XLSX заново через Импорт → Филиалы, с колонками Lat и Lon ' +
+        '(или двумя колонками «Геолокация») и включите «Очистить таблицу перед импортом».'
+      );
+      return false;
+    }
+    return true;
   } catch (err) {
     console.warn('Failed to load branches:', err);
+    alert('Не удалось загрузить филиалы: ' + (err.message || err));
+    return false;
   }
 }
 
@@ -1496,7 +1520,8 @@ async function toggleBranchesLayer() {
   const legend = document.getElementById('branches-legend');
 
   if (!branchesLoaded) {
-    await loadBranches();
+    const ok = await loadBranches();
+    if (!ok) return;
   }
 
   branchesVisible = !branchesVisible;
@@ -2147,7 +2172,7 @@ function selectAtm(id) {
 const DEPOT = { lat: 41.3510, lon: 69.2830, name: 'Депо (Amir Temur 107)' };
 
 // Цвета для разных машин
-const CAR_COLORS  = ['#f59e0b', '#3b82f6', '#a855f7', '#10b981'];
+const CAR_COLORS  = ['#f59e0b', '#3b82f6', '#a855f7', '#10b981', '#ef4444', '#06b6d4', '#84cc16', '#f97316', '#6366f1', '#14b8a6', '#e11d48', '#0ea5e9'];
 const CAR_LABELS  = ['Машина A', 'Машина B', 'Машина C', 'Машина D'];
 
 let routeControls = [];   // Leaflet Routing Machine контролы (локальный режим)
@@ -2156,24 +2181,70 @@ let depotMarker   = null;
 
 async function buildRegionalRoute(status) {
   clearRoute();
+  if (status === 'all' && !confirm('В маршрут попадут и банкоматы в норме. Продолжить только для нуждающихся (критичные + предупреждения)?\n\nOK — только нуждающиеся\nОтмена — прервать')) {
+    return;
+  }
+  if (status === 'all') status = 'warning';
+
+  const speedKmh = parseInt(document.getElementById('speed-kmh')?.value, 10) || 30;
+  const maxStops = parseInt(document.getElementById('max-stops')?.value, 10) || 12;
+  const states = ATM_META.map(atm => {
+    const st = atmState[atm.id];
+    if (!st) return null;
+    return { terminal_id: atm.id, balance: Math.round(st.balance || 0), status: st.status };
+  }).filter(Boolean);
+
+  const infoEl = document.getElementById('route-info');
+  if (infoEl) infoEl.innerHTML = 'Строим маршруты по дорогам только для ATM ниже нормы…';
+
   try {
-    const data = await fetch(`${API_BASE}/api/routes/incassation?status=${status}`, {method:'POST'}).then(r=>r.json());
-    if (!data.cars || !data.cars.length) { const d=data.diagnostics||{}; alert(`Маршрут не построен. ATM в БД: ${d.atms_total||0}; ATM с координатами: ${d.atms_with_coordinates||0}; филиалов с Инкассация=1: ${d.eligible_branches||0}; ATM для выбранного режима: ${d.target_atms||0}. Проверьте совпадение региона у ATM и филиала.`); return; }
-    data.cars.forEach((car,i)=>{
-      const pts=car.geometry.map(p=>[p.lat,p.lon]);
-      const color=CAR_COLORS[i%CAR_COLORS.length];
-      routingLayers.push(L.polyline(pts,{color,weight:5,opacity:.85}).addTo(map));
-      const first=car.geometry[0];
-      routingLayers.push(L.marker([first.lat,first.lon]).addTo(map).bindPopup(`<b>Старт: ${car.departure_branch.name}</b><br>${car.region}<br>${car.departure_branch.address||''}`));
+    const data = await fetch(
+      `${API_BASE}/api/routes/incassation?status=${status}&speed_kmh=${speedKmh}&max_stops=${maxStops}&snap_roads=true`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ states, persist: true }),
+      }
+    ).then(r => r.json());
+    if (!data.cars || !data.cars.length) {
+      const d = data.diagnostics || {};
+      alert(
+        `Нет банкоматов, которые нужно заправлять.\n\n` +
+        `В норме (пропущены): ${d.skipped_ok ?? '—'}\n` +
+        `Нуждаются (critical/warning): ${d.target_atms || 0}\n\n` +
+        `ATM в норме в маршрут не включаются.`
+      );
+      return;
+    }
+    data.cars.forEach((car, i) => {
+      car.color = CAR_COLORS[i % CAR_COLORS.length];
+      car.label = car.label || `${car.region} · ${car.departure_branch?.name || ''}`;
+      car.total_dist_km = car.total_dist_km ?? car.distance_km ?? 0;
+      car.est_time_min = car.est_time_min || 0;
+      car.refill_total = car.refill_total || 0;
+      (car.stops || []).forEach(s => {
+        s.atm_id = s.atm_id || s.terminal_id;
+        s.name = s.name || s.address || s.terminal_id;
+        s.bank = s.bank || '';
+        s.balance = s.balance || 0;
+        s.balance_pct = Number(s.balance_pct || 0);
+        s.refill_amount = s.refill_amount || 0;
+      });
     });
-    const warnings=(data.unserved_regions||[]).map(x=>`${x.region}: ${x.reason}`).join('<br>');
-    document.getElementById('route-info').innerHTML=`<b>Региональные маршруты: ${data.cars.length}</b><br>Старт/финиш: филиал с Инкассация = 1<br>Остановок: ${data.total_stops} · ${data.total_dist_km} км · ~${data.est_time_min}${data.fallback_unknown_balances?'<br><span style="color:#d97706">Нет актуальных балансов: показан предварительный маршрут по ATM с неизвестным статусом.</span>':''}${warnings?'<br><span style="color:#dc2626">'+warnings+'</span>':''}`;
-    const all=data.cars.flatMap(c=>c.geometry.map(p=>[p.lat,p.lon])); if(all.length) map.fitBounds(all,{padding:[45,45]});
-  } catch(e) { alert('Ошибка построения регионального маршрута: '+e.message); }
+    renderRegionalRoutes(data);
+    if (infoEl) {
+      const roads = (data.cars || []).filter(c => c.routing_provider === 'osrm').length;
+      infoEl.innerHTML +=
+        `<br><a href="/dashboard/incassation.html" style="color:#7c3aed;font-weight:800">Открыть в календаре →</a>` +
+        (data.saved_to_calendar ? ` · сохранено рейсов: ${data.saved_to_calendar}` : '') +
+        (roads ? ` · дороги OSRM: ${roads}` : '');
+    }
+  } catch (e) {
+    alert('Ошибка построения регионального маршрута: ' + e.message);
+  }
 }
 
 async function buildRoute(filterStatus) {
-  // All standard modes are region-first: purple incassation branch is the depot.
   return buildRegionalRoute(filterStatus);
   clearRoute();
 
@@ -2391,6 +2462,133 @@ function renderRouteSidebar(carRoutes, totalStops, totalDistKm, totalTimeMin) {
     `;
     container.appendChild(div);
   });
+  hydrateIcons();
+}
+
+function renderRegionalRoutes(data) {
+  routingLayers.forEach(l => map.removeLayer(l));
+  routingLayers = [];
+  if (depotMarker) { map.removeLayer(depotMarker); depotMarker = null; }
+
+  const allPts = [];
+  data.cars.forEach((car, gi) => {
+    const color = car.color || CAR_COLORS[gi % CAR_COLORS.length];
+    const dep = car.departure_branch || {};
+    const routePts = (car.geometry || []).map(p => L.latLng(p.lat, p.lon));
+    const wps = [];
+    if (dep.lat != null && dep.lon != null) wps.push(L.latLng(dep.lat, dep.lon));
+    (car.stops || []).forEach(s => wps.push(L.latLng(s.lat, s.lon)));
+    if (dep.lat != null && dep.lon != null) wps.push(L.latLng(dep.lat, dep.lon));
+    allPts.push(...(routePts.length ? routePts : wps));
+
+    const roadLike = routePts.length > wps.length + 4;
+    if (roadLike) {
+      routingLayers.push(L.polyline(routePts, {
+        color: '#000', weight: 8, opacity: 0.16, lineJoin: 'round', lineCap: 'round'
+      }).addTo(map));
+      routingLayers.push(L.polyline(routePts, {
+        color, weight: 5, opacity: 0.92, lineJoin: 'round', lineCap: 'round'
+      }).addTo(map));
+    } else if (wps.length >= 2 && L.Routing) {
+      const ctrl = L.Routing.control({
+        waypoints: wps,
+        router: L.Routing.osrmv1({ serviceUrl: 'https://router.project-osrm.org/route/v1' }),
+        addWaypoints: false,
+        draggableWaypoints: false,
+        fitSelectedRoutes: false,
+        show: false,
+        routeWhileDragging: false,
+        lineOptions: {
+          styles: [
+            { color: '#000', weight: 8, opacity: 0.16 },
+            { color, weight: 5, opacity: 0.92 },
+          ],
+        },
+        createMarker: () => null,
+      }).addTo(map);
+      routeControls.push(ctrl);
+    } else if (wps.length >= 2) {
+      routingLayers.push(L.polyline(wps, { color, weight: 5, opacity: 0.9 }).addTo(map));
+    }
+    if (dep.lat != null && dep.lon != null) {
+      const depotPin = L.marker([dep.lat, dep.lon], {
+        icon: L.divIcon({
+          className: '',
+          html: `<div style="width:34px;height:34px;border-radius:9px;background:${color};border:2.5px solid #fff;display:flex;align-items:center;justify-content:center;box-shadow:0 0 10px ${color}99">${appIcon('building-2')}</div>`,
+          iconSize: [34, 34], iconAnchor: [17, 17]
+        })
+      }).addTo(map).bindPopup(`<b>${dep.name || 'Филиал'}</b><br>${car.region || ''}<br>${dep.address || ''}`);
+      routingLayers.push(depotPin);
+    }
+
+    (car.stops || []).forEach((stop, si) => {
+      const stColor = stop.status === 'critical' ? '#ef4444' : stop.status === 'warning' ? '#f59e0b' : '#22c55e';
+      const pin = L.marker([stop.lat, stop.lon], {
+        icon: L.divIcon({
+          className: '',
+          html: `<div style="width:28px;height:28px;border-radius:50%;background:${color};border:3px solid #fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:#fff;box-shadow:0 2px 6px #0005">${si + 1}</div>`,
+          iconSize: [28, 28], iconAnchor: [14, 14]
+        })
+      }).addTo(map).bindPopup(`
+        <div class="popup-title">${si + 1}. ${stop.name || stop.terminal_id}</div>
+        <div class="popup-row">Вилоят: <span>${car.region || '—'}</span></div>
+        <div class="popup-row">Филиал: <span>${dep.name || dep.local_code || '—'}</span></div>
+        <div class="popup-row">Адрес: <span>${stop.address || '—'}</span></div>
+        <div class="popup-row">Статус: <span style="color:${stColor}">${stop.status || '—'}</span></div>
+      `);
+      routingLayers.push(pin);
+    });
+  });
+
+  if (allPts.length) map.fitBounds(L.latLngBounds(allPts), { padding: [45, 45] });
+
+  const warnings = (data.unserved_regions || []).map(x => `${x.region}: ${x.reason}`).join('<br>');
+  document.getElementById('route-info').innerHTML =
+    `<b>${data.cars.length} маршрутов по вилоятам</b><br>` +
+    `Старт/финиш: свой филиал с Инкассация = 1<br>` +
+    `Остановок: ${data.total_stops} · ${data.total_dist_km} км · ~${data.est_time_min} мин` +
+    (data.fallback_unknown_balances ? '<br><span style="color:#d97706">Нет актуальных балансов: предварительный маршрут по ATM без статуса.</span>' : '') +
+    (warnings ? `<br><span style="color:#dc2626">${warnings}</span>` : '');
+
+  const sb = document.getElementById('route-sidebar');
+  if (!sb) return;
+  sb.classList.add('open');
+  document.getElementById('rs-cars-count').textContent = data.cars.length;
+  document.getElementById('rs-stops-count').textContent = data.total_stops;
+  document.getElementById('rs-distance').textContent = Number(data.total_dist_km || 0).toFixed(1) + ' км';
+  document.getElementById('rs-time').textContent = (data.est_time_min || 0) + ' мин';
+
+  const container = document.getElementById('rs-cars-list');
+  if (!container) return;
+  container.innerHTML = data.cars.map(car => {
+    const color = car.color;
+    const stops = (car.stops || []).map((s, si) => {
+      const pct = Number(s.balance_pct || 0).toFixed(0);
+      const balStr = ((s.balance || 0) / 1e6).toFixed(1) + ' млн';
+      const balCls = s.status === 'critical' ? 'bal-crit' : s.status === 'warning' ? 'bal-warn' : 'bal-ok';
+      return `
+        <div class="rs-stop" onclick="typeof selectAtm==='function' && selectAtm('${s.atm_id || s.terminal_id || ''}')" style="cursor:pointer">
+          <div class="rs-stop-num" style="background:${color}">${si + 1}</div>
+          <div class="rs-stop-name">${s.name || s.terminal_id}<br>
+            <span style="color:#667085;font-size:10px">${s.bank || s.address || ''}</span>
+          </div>
+          <div class="rs-stop-bal ${balCls}">${balStr}<br>
+            <span style="font-weight:500;color:#667085">${pct}%</span>
+          </div>
+        </div>`;
+    }).join('');
+    return `
+      <div class="rs-car">
+        <div class="rs-car-header" style="background:${color}22;border:1px solid ${color}55;border-bottom:none;">
+          <div class="rs-car-dot" style="background:${color}"></div>
+          <span style="color:${color};font-weight:700">${car.label}</span>
+          <span style="margin-left:auto;color:#667085;font-size:11px;font-weight:600">
+            ${car.stops.length} ост. · ${Number(car.total_dist_km || 0).toFixed(1)} км · ${car.est_time_min || 0} мин
+          </span>
+        </div>
+        <div class="rs-stops">${stops}</div>
+      </div>`;
+  }).join('');
   hydrateIcons();
 }
 

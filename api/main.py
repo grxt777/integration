@@ -48,7 +48,7 @@ from typing import Any, Dict, List, Optional
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import uvicorn
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import Body, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -68,13 +68,15 @@ from core.db import (
     list_atms,
     list_branches,
     list_branches_full,
+    list_incassation_trips,
     list_regions,
+    replace_incassation_trips,
     truncate_atms,
     truncate_branches,
     update_balance,
 )
 from core.importer import parse_branches_xlsx, parse_xlsx
-from core.incassation_router import build_regional_routes
+from core.incassation_router import apply_live_states, build_regional_routes
 from core.cashier_analytics import (
     cashier_analytics,
     cashier_detail,
@@ -379,6 +381,14 @@ async def import_branches(
 
         deleted = truncate_branches() if replace else 0
         stats = bulk_insert_branches(parsed["records"])
+        without_coordinates = parsed.get("without_coordinates", 0)
+        warning = None
+        if without_coordinates:
+            warning = (
+                f"У {without_coordinates} из {len(parsed['records'])} филиалов нет координат "
+                "(lat/lon) — на карте они не отобразятся. Проверьте колонки широты и долготы "
+                "и загрузите файл снова с галочкой «Очистить таблицу»."
+            )
 
         return {
             "ok": True,
@@ -390,6 +400,8 @@ async def import_branches(
             "imported": stats["inserted"],
             "updated": stats["updated"],
             "skipped_no_local_code": stats["skipped"],
+            "without_coordinates": without_coordinates,
+            "warning": warning,
             "validation_errors": parsed["errors"][:50],
             "validation_errors_count": len(parsed["errors"]),
             "branches_in_db_after": count_branches(),
@@ -489,11 +501,65 @@ async def get_baseline():
 # ИНКАССАЦИЯ
 # ═══════════════════════════════════════════════════════════
 
-@app.post("/api/routes/incassation", summary="Маршруты: филиал-инкассация → ATM своего региона")
-async def regional_incassation_route(status: str = Query("warning", pattern="^(critical|warning|all)$")):
+class LiveAtmState(BaseModel):
+    terminal_id: str
+    balance: Optional[int] = None
+    status: Optional[str] = None
+
+
+class IncassationRouteRequest(BaseModel):
+    states: List[LiveAtmState] = []
+    persist: bool = True
+
+
+@app.post("/api/routes/incassation", summary="Маршруты: только ATM ниже нормы, свой вилоят")
+async def regional_incassation_route(
+    status: str = Query("warning", pattern="^(critical|warning|all)$"),
+    speed_kmh: int = Query(30, ge=10, le=80),
+    max_stops: int = Query(12, ge=1, le=200),
+    snap_roads: bool = Query(True),
+    payload: Optional[IncassationRouteRequest] = Body(None),
+):
+    req = payload or IncassationRouteRequest()
     atms = list_atms(limit=5000)
+    if req.states:
+        apply_live_states(atms, [s.model_dump() for s in req.states])
     branches = list_branches_full(incassation=1, limit=5000)
-    return build_regional_routes(atms, branches, status)
+    result = build_regional_routes(
+        atms, branches, status,
+        speed_kmh=speed_kmh, max_stops=max_stops, snap_roads=snap_roads,
+    )
+    if req.persist and result.get("cars"):
+        replace_incassation_trips(result["cars"])
+        result["saved_to_calendar"] = len(result["cars"])
+    else:
+        result["saved_to_calendar"] = 0
+    return result
+
+
+@app.get("/api/incassation/calendar", summary="Сохранённые рейсы инкассации для календаря")
+async def incassation_calendar():
+    trips = list_incassation_trips()
+    events = []
+    for t in trips:
+        due = f"{t.get('planned_date')}T09:00:00+05:00"
+        events.append({
+            "id": t.get("id"),
+            "due_at": due,
+            "planned_date": t.get("planned_date"),
+            "region": t.get("region"),
+            "address": t.get("label") or t.get("branch_address"),
+            "terminal_id": t.get("branch_local_code"),
+            "priority": t.get("priority") or "planned",
+            "hours_to_low_cash": t.get("est_time_min"),
+            "recommended_refill": t.get("refill_total") or 0,
+            "stops": t.get("stops") or [],
+            "distance_km": t.get("distance_km"),
+            "est_time_min": t.get("est_time_min"),
+            "label": t.get("label"),
+            "type": "route",
+        })
+    return {"events": events, "count": len(events), "trips": trips}
 
 
 @app.get("/api/incassation/plan", summary="Прогнозный план инкассации")

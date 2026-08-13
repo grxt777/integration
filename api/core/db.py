@@ -15,6 +15,7 @@ SQLite. Благодаря этому бизнес-логика кассиров
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import sqlite3
@@ -230,6 +231,27 @@ def init_db() -> None:
         """)
         cur.execute("CREATE INDEX IF NOT EXISTS idx_branches_region ON branches(region)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_branches_inc    ON branches(incassation)")
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS incassation_trips (
+                id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                planned_date       TEXT NOT NULL,
+                region             TEXT,
+                label              TEXT,
+                priority           TEXT,
+                branch_local_code  TEXT,
+                branch_address     TEXT,
+                branch_lat         REAL,
+                branch_lon         REAL,
+                stops_json         TEXT NOT NULL DEFAULT '[]',
+                geometry_json      TEXT NOT NULL DEFAULT '[]',
+                distance_km        REAL,
+                est_time_min       INTEGER,
+                refill_total       INTEGER,
+                generated_at       TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_inc_trips_date ON incassation_trips(planned_date)")
         cur.close()
 
     # Домен кассиров живёт в отдельном модуле, чтобы не смешивать бизнес-логику.
@@ -496,3 +518,57 @@ def bulk_insert_branches(records: List[Dict[str, Any]]) -> Dict[str, int]:
                 """, (*values, local_code))
                 stats["inserted"] += 1
     return stats
+
+
+def replace_incassation_trips(cars: List[Dict[str, Any]]) -> int:
+    """Replace the saved calendar with the newly built trips."""
+    with _connect() as conn:
+        conn.execute("DELETE FROM incassation_trips")
+        conn.execute("DELETE FROM sqlite_sequence WHERE name = 'incassation_trips'")
+        for car in cars:
+            dep = car.get("departure_branch") or {}
+            conn.execute(
+                """
+                INSERT INTO incassation_trips (
+                    planned_date, region, label, priority,
+                    branch_local_code, branch_address, branch_lat, branch_lon,
+                    stops_json, geometry_json, distance_km, est_time_min, refill_total
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    car.get("planned_date"),
+                    car.get("region"),
+                    car.get("label"),
+                    car.get("priority") or "planned",
+                    dep.get("local_code"),
+                    dep.get("address"),
+                    dep.get("lat"),
+                    dep.get("lon"),
+                    json.dumps(car.get("stops") or [], ensure_ascii=False),
+                    json.dumps(car.get("geometry") or [], ensure_ascii=False),
+                    car.get("distance_km") or 0,
+                    car.get("est_time_min") or 0,
+                    car.get("refill_total") or 0,
+                ),
+            )
+        return len(cars)
+
+
+def list_incassation_trips() -> List[Dict[str, Any]]:
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM incassation_trips ORDER BY planned_date, region, id"
+        ).fetchall()
+    out = []
+    for r in rows:
+        item = dict(r)
+        try:
+            item["stops"] = json.loads(item.pop("stops_json") or "[]")
+        except json.JSONDecodeError:
+            item["stops"] = []
+        try:
+            item["geometry"] = json.loads(item.pop("geometry_json") or "[]")
+        except json.JSONDecodeError:
+            item["geometry"] = []
+        out.append(item)
+    return out
