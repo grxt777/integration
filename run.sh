@@ -56,6 +56,31 @@ if [ "$SKIP_DB_SETUP" != "1" ] && ! db_is_up; then
     exit 1
   fi
 
+  # Дополняем PATH типичными путями macOS/Linux: Homebrew на Apple Silicon
+  # (/opt/homebrew) и Intel (/usr/local) не всегда есть в PATH у неинтерактивных
+  # шеллов, а Postgres.app и EDB-инсталлятор кладут бинарники в свои каталоги.
+  for candidate in \
+    /opt/homebrew/bin \
+    /usr/local/bin \
+    /opt/homebrew/opt/postgresql@17/bin \
+    /opt/homebrew/opt/postgresql@16/bin \
+    /opt/homebrew/opt/postgresql@15/bin \
+    /usr/local/opt/postgresql@17/bin \
+    /usr/local/opt/postgresql@16/bin \
+    /usr/local/opt/postgresql@15/bin \
+    /Applications/Postgres.app/Contents/Versions/latest/bin \
+    /Library/PostgreSQL/17/bin \
+    /Library/PostgreSQL/16/bin
+  do
+    if [ -d "$candidate" ]; then
+      case ":$PATH:" in
+        *":$candidate:"*) ;;
+        *) PATH="$candidate:$PATH" ;;
+      esac
+    fi
+  done
+  export PATH
+
   STARTED=0
 
   # macOS + Homebrew
@@ -65,7 +90,7 @@ if [ "$SKIP_DB_SETUP" != "1" ] && ! db_is_up; then
     if [ -z "$FORMULA" ]; then
       echo "📥 PostgreSQL не установлен. Устанавливаю postgresql@16 через Homebrew..."
       echo "   (это займёт пару минут)"
-      brew install postgresql@16
+      brew install postgresql@16 || true
       FORMULA="postgresql@16"
     fi
 
@@ -100,14 +125,47 @@ if [ "$SKIP_DB_SETUP" != "1" ] && ! db_is_up; then
     echo ""
   fi
 
+  # Фолбэк: поднимаем базу в Docker — работает без Homebrew и прав администратора
+  if ! db_is_up && command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    echo "🐳 Homebrew недоступен — поднимаю PostgreSQL в Docker..."
+    if docker compose version >/dev/null 2>&1; then
+      docker compose up -d db >/dev/null 2>&1 || true
+    else
+      docker-compose up -d db >/dev/null 2>&1 || true
+    fi
+    printf "⏳ Жду готовности контейнера с базой"
+    for _ in $(seq 1 60); do
+      if db_is_up; then break; fi
+      printf "."
+      sleep 1
+    done
+    echo ""
+  fi
+
   if ! db_is_up; then
     echo ""
     echo "❌ Не удалось запустить PostgreSQL автоматически."
     echo ""
-    echo "   Запустите вручную одной из команд:"
-    echo "     macOS:   brew install postgresql@16 && brew services start postgresql@16"
-    echo "     Linux:   sudo systemctl start postgresql"
-    echo "     Docker:  docker compose up      # поднимет базу и приложение целиком"
+    if ! command -v brew >/dev/null 2>&1 && [ "$(uname)" = "Darwin" ]; then
+      echo "   Homebrew не найден. Варианты:"
+      echo ""
+      echo "   1) Поднять всё в Docker (проще всего, ничего ставить не нужно):"
+      echo "        docker compose up"
+      echo ""
+      echo "   2) Установить Homebrew, затем PostgreSQL:"
+      echo '        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
+      echo "        brew install postgresql@16 && brew services start postgresql@16"
+      echo ""
+      echo "   3) Установить Postgres.app: https://postgresapp.com"
+      echo ""
+      echo "   Если PostgreSQL уже установлен, но лежит в нестандартном месте —"
+      echo "   укажите его порт/хост в файле .env"
+    else
+      echo "   Запустите вручную одной из команд:"
+      echo "     macOS:   brew install postgresql@16 && brew services start postgresql@16"
+      echo "     Linux:   sudo systemctl start postgresql"
+      echo "     Docker:  docker compose up      # поднимет базу и приложение целиком"
+    fi
     exit 1
   fi
   echo "✅ PostgreSQL доступен на $DB_HOST:$DB_PORT"

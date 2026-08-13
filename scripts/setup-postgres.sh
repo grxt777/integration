@@ -26,6 +26,30 @@ DB_PASS="${POSTGRES_PASSWORD:-bank}"
 
 echo "🔧 Настройка PostgreSQL: роль '$DB_USER', база '$DB_NAME' на $DB_HOST:$DB_PORT"
 
+# psql часто лежит вне PATH: Homebrew на Apple Silicon (/opt/homebrew) и Intel
+# (/usr/local), Postgres.app и EDB-инсталлятор используют свои каталоги.
+for candidate in \
+  /opt/homebrew/bin \
+  /usr/local/bin \
+  /opt/homebrew/opt/postgresql@17/bin \
+  /opt/homebrew/opt/postgresql@16/bin \
+  /opt/homebrew/opt/postgresql@15/bin \
+  /usr/local/opt/postgresql@17/bin \
+  /usr/local/opt/postgresql@16/bin \
+  /usr/local/opt/postgresql@15/bin \
+  /Applications/Postgres.app/Contents/Versions/latest/bin \
+  /Library/PostgreSQL/17/bin \
+  /Library/PostgreSQL/16/bin
+do
+  if [ -d "$candidate" ]; then
+    case ":$PATH:" in
+      *":$candidate:"*) ;;
+      *) PATH="$candidate:$PATH" ;;
+    esac
+  fi
+done
+export PATH
+
 # Homebrew ставит postgresql в отдельный префикс и не всегда добавляет его в PATH.
 if ! command -v psql >/dev/null 2>&1 && command -v brew >/dev/null 2>&1; then
   for formula in $(brew list --formula 2>/dev/null | grep -E '^postgresql(@[0-9]+)?$'); do

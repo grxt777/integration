@@ -82,6 +82,8 @@ SKIP_DB_SETUP=1 ./run.sh    # не трогать базу (например, о
 | `role "bank" does not exist` / ошибка пароля | `./scripts/setup-postgres.sh` |
 | `Address already in use` | `./run.sh` сам освободит порт. Иначе: `lsof -ti:8000 \| xargs kill -9` или `APP_PORT=8001 ./run.sh` |
 | Нет прав на `brew` / нет PostgreSQL | Поднимите всё в контейнерах: `docker compose up` |
+| `Не удалось запустить PostgreSQL автоматически` + нет Homebrew | Самый быстрый путь — `docker compose up`. Либо поставьте [Homebrew](https://brew.sh) или [Postgres.app](https://postgresapp.com) |
+| PostgreSQL установлен, но скрипт его не видит | Он ищет бинарники в `/opt/homebrew`, `/usr/local`, Postgres.app и `/Library/PostgreSQL`. Если у вас другой путь или порт — пропишите их в `.env` |
 
 При проблемах с подключением приложение выводит понятное сообщение с текущими
 настройками и командами для исправления — вместо стектрейса драйвера.
