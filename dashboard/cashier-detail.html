@@ -708,8 +708,8 @@
         <div class="discipline-header">
           <div class="discipline-icon">⚠️</div>
           <div>
-            <div class="discipline-title">Дисциплинарное Взыскание</div>
-            <div class="discipline-subtitle">На сотрудника наложено дисциплинарное взыскание</div>
+            <div class="discipline-title">Выговор</div>
+            <div class="discipline-subtitle">На сотрудника наложен выговор</div>
           </div>
         </div>
         <div class="discipline-grid" id="discipline-grid">
@@ -844,7 +844,7 @@
       const coreTbody = document.getElementById('core-metrics-body');
       const discRowHTML = x.has_discipline ? `
         <tr>
-          <th style="background:#fff1f2;color:#be123c">⚠️ Дисциплинарное взыскание</th>
+          <th style="background:#fff1f2;color:#be123c">⚠️ Выговор</th>
           <td style="background:#fff1f2">
             <div style="display:flex;flex-direction:column;gap:4px">
               ${x.discipline_type ? `<div><span style="font-weight:700;color:#9f1239">📋 Вид:</span> <span style="color:#7f1d1d;font-weight:600">${escapeHtml(x.discipline_type)}</span></div>` : ''}
@@ -914,7 +914,7 @@
         if (x.discipline_type) {
           fieldsHTML += `
             <div class="discipline-field">
-              <div class="discipline-field-label">📋 Вид взыскания</div>
+              <div class="discipline-field-label">📋 Вид выговора</div>
               <div class="discipline-field-val">${escapeHtml(x.discipline_type)}</div>
             </div>`;
         }
@@ -930,7 +930,7 @@
         if (x.discipline_reason) {
           fieldsHTML += `
             <div class="discipline-field" style="grid-column: 1 / -1;">
-              <div class="discipline-field-label">💬 Причина взыскания</div>
+              <div class="discipline-field-label">💬 Причина выговора</div>
               <div class="discipline-field-val" style="white-space:pre-wrap;line-height:1.6">${escapeHtml(x.discipline_reason)}</div>
             </div>`;
         }

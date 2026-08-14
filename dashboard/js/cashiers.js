@@ -577,7 +577,7 @@
           // Discipline status tag
           let discTagHTML = '';
           if (x.has_discipline) {
-            discTagHTML = `<div style="font-size:10px;font-weight:800;padding:2px 7px;border-radius:6px;display:inline-block;background:#fff1f2;color:#be123c;border:1px solid #fecdd3;margin-top:4px" title="Сотрудник имеет дисциплинарное взыскание (Нажмите для просмотра)">⚠️ Взыскание</div>`;
+            discTagHTML = `<div style="font-size:10px;font-weight:800;padding:2px 7px;border-radius:6px;display:inline-block;background:#fff1f2;color:#be123c;border:1px solid #fecdd3;margin-top:4px" title="Сотрудник имеет выговор (Нажмите для просмотра)">⚠️ Выговор</div>`;
           }
 
           const currentNavParams = new URLSearchParams(window.location.search).toString();
@@ -588,7 +588,7 @@
               <div class="cashier-info-box">
                 <div class="avatar-circle" style="${x.has_discipline ? 'border:2px solid #f43f5e' : ''}">${initials}</div>
                 <div>
-                  <div class="cashier-name">${escapeHtml(x.full_name)} ${x.has_discipline ? '<span style="color:#e11d48" title="Взыскание">⚠️</span>' : ''}</div>
+                  <div class="cashier-name">${escapeHtml(x.full_name)} ${x.has_discipline ? '<span style="color:#e11d48" title="Выговор">⚠️</span>' : ''}</div>
                   <div style="margin-top:2px">${roleBadgeHTML} <small class="muted" style="margin-left:4px">№ ${escapeHtml(x.employee_number || '—')}</small></div>
                 </div>
               </div>

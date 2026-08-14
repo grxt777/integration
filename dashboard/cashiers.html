@@ -125,13 +125,13 @@
         <div class="kpi-sub">Ставка пустая — нет временной замены</div>
       </div>
 
-      <div class="kpi-card" onclick="setStatus('disciplined')" style="cursor:pointer;" title="Нажмите, чтобы отфильтровать сотрудников с взысканиями">
+      <div class="kpi-card" onclick="setStatus('disciplined')" style="cursor:pointer;" title="Нажмите, чтобы отфильтровать сотрудников с выговором">
         <div class="kpi-head">
-          <span class="kpi-title">Взыскания</span>
+          <span class="kpi-title">Выговоры</span>
           <div class="kpi-icon" style="background:#fff1f2;color:#be123c"><i data-lucide="shield-alert"></i></div>
         </div>
         <div class="kpi-value" id="k-disciplined" style="color:#be123c">—</div>
-        <div class="kpi-sub">Сотрудники со взысканиями</div>
+        <div class="kpi-sub">Сотрудники с выговором</div>
       </div>
 
       <div class="kpi-card">
@@ -185,7 +185,7 @@
         <button class="st-pill" data-status="temporary" onclick="setStatus('temporary')" style="background:#fef3c7;color:#92400e;border-color:#fde68a">🟡 Временные замещения</button>
         <button class="st-pill" data-status="no_replacement" onclick="setStatus('no_replacement')" style="background:#fee2e2;color:#991b1b;border-color:#fca5a5">🔴 Без замены (Внимание)</button>
         <button class="st-pill" data-status="vacant" onclick="setStatus('vacant')" style="background:#f1f5f9;color:#475569;border-color:#cbd5e1">⚪ Вакантные ставки</button>
-        <button class="st-pill" data-status="disciplined" onclick="setStatus('disciplined')" style="background:#fff1f2;color:#be123c;border-color:#fecdd3">⚠️ С взысканием</button>
+        <button class="st-pill" data-status="disciplined" onclick="setStatus('disciplined')" style="background:#fff1f2;color:#be123c;border-color:#fecdd3">⚠️ С выговором</button>
       </div>
     </section>
 
