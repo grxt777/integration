@@ -18,6 +18,9 @@ Bank Intelligence Platform — FastAPI Backend
     GET   /api/branches/{local_code}        → детали филиала
     POST  /api/branches/import              → загрузка XLSX реестра филиалов
     POST  /api/branches/import/clear        → очистить реестр филиалов
+    POST  /api/branches/balances/import     → импорт кассовых остатков (отдельный XLSX)
+    POST  /api/branches/balances/clear      → очистить кассовые остатки
+    GET   /api/branch-balances/analytics    → сводка кассы по регионам
     GET   /api/alerts                       → ATM в critical/warning
     GET   /api/baseline                     → сводный отчёт по остаткам
     POST  /api/routes/incassation           → региональные маршруты инкассации
@@ -78,6 +81,8 @@ from core.db import (
 from core.importer import parse_branches_xlsx, parse_xlsx
 from core.branch_balance import (
     balances_by_local_code_map,
+    branch_cash_analytics,
+    clear_branch_balances,
     get_branch_balance_by_local_code,
     list_branch_balances,
     parse_branch_balances_xlsx,
@@ -391,6 +396,11 @@ async def get_all_branch_balances():
     return {"balances": rows, "count": len(rows)}
 
 
+@app.get("/api/branch-balances/analytics", summary="Сводка кассы: всего и по регионам")
+async def get_branch_cash_analytics():
+    return branch_cash_analytics()
+
+
 @app.post("/api/branches/balances/import", summary="Импорт кассовых остатков филиалов (отдельный XLSX)")
 async def import_branch_balances(
     file: UploadFile = File(..., description="XLSX: Код БХМ, номи, Сўм, лимиты, валюты"),
@@ -423,6 +433,12 @@ async def import_branch_balances(
         }
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@app.post("/api/branches/balances/clear", summary="Очистить все кассовые остатки филиалов")
+async def clear_branch_cash_balances():
+    deleted = clear_branch_balances()
+    return {"ok": True, "deleted": deleted, "balances_in_db": 0}
 
 
 @app.post("/api/branches/import", summary="Импорт филиалов из XLSX")

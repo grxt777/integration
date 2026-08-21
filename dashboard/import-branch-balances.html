@@ -49,6 +49,9 @@
     .btn-primary { background: var(--primary); color: #fff; }
     .btn-primary:disabled { opacity: .45; cursor: not-allowed; }
     .btn-ghost { background: #fff; border: 1px solid var(--border) !important; color: var(--muted); }
+    .btn-danger { background: #fff; border: 1px solid #fecaca !important; color: var(--danger); }
+    .btn-danger:hover { background: #fef2f2; }
+    .status-line { margin-top: 14px; font-size: 13px; color: var(--muted); }
     .progress { display: none; margin-top: 16px; align-items: center; gap: 10px; color: var(--muted); font-size: 13px; }
     .progress.show { display: flex; }
     .spinner { width: 18px; height: 18px; border: 2px solid #99f6e4; border-top-color: var(--primary); border-radius: 50%; animation: spin .7s linear infinite; }
@@ -78,7 +81,7 @@
     <h2><i data-lucide="wallet" style="width:18px;height:18px"></i> Загрузить остатки филиалов</h2>
     <p>
       Отдельный Excel — <b>не меняет</b> реестр филиалов с координатами.
-      Связка по <code>Код БХМ</code> ↔ локал код филиала (или по названию).
+      Связка <b>только</b> по <code>Код БХМ</code> ↔ локал код филиала (по названию — нет).
       Пустые ячейки и <code>-</code> = нет данных; <code>0</code> = ноль.
     </p>
 
@@ -94,8 +97,12 @@
       <button class="btn-primary" id="uploadBtn" disabled>
         <i data-lucide="play" style="width:16px;height:16px"></i> Загрузить
       </button>
-      <button class="btn-ghost" id="resetBtn">Сбросить</button>
+      <button class="btn-ghost" id="resetBtn">Сбросить файл</button>
+      <button class="btn-danger" id="clearDbBtn" type="button">
+        <i data-lucide="trash-2" style="width:16px;height:16px"></i> Очистить остатки в БД
+      </button>
     </div>
+    <div class="status-line" id="dbStatus">В базе сейчас: загрузка…</div>
 
     <div class="progress" id="progress"><div class="spinner"></div><span>Загружаю…</span></div>
 
@@ -144,10 +151,39 @@
     uploadBtn.disabled = false;
   }
 
+  async function refreshDbStatus() {
+    const el = document.getElementById('dbStatus');
+    try {
+      const r = await fetch(API + '/api/branch-balances');
+      const d = await r.json();
+      const n = d.count ?? (d.balances || []).length ?? 0;
+      el.textContent = n
+        ? `В базе сейчас: ${n} строк остатков (карта/анализ берут только их).`
+        : 'В базе сейчас: остатков нет — загрузите свой Excel.';
+    } catch (_) {
+      el.textContent = 'В базе сейчас: не удалось проверить.';
+    }
+  }
+  refreshDbStatus();
+
   document.getElementById('resetBtn').onclick = () => {
     selectedFile = null; fileInput.value = '';
     fileName.style.display = 'none'; uploadBtn.disabled = true;
     document.getElementById('result').classList.remove('show');
+  };
+
+  document.getElementById('clearDbBtn').onclick = async () => {
+    if (!confirm('Удалить все кассовые остатки из базы? Реестр филиалов не трогается.')) return;
+    try {
+      const res = await fetch(API + '/api/branches/balances/clear', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Ошибка очистки');
+      alert('Удалено строк: ' + (data.deleted ?? 0));
+      document.getElementById('result').classList.remove('show');
+      await refreshDbStatus();
+    } catch (e) {
+      alert(e.message || e);
+    }
   };
 
   uploadBtn.onclick = async () => {
@@ -168,6 +204,7 @@
       document.getElementById('rNote').textContent =
         (data.note || '') + ' Откройте карту и включите слой филиалов.';
       result.classList.add('show');
+      await refreshDbStatus();
     } catch (e) {
       alert(e.message || e);
     } finally {
