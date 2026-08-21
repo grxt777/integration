@@ -257,6 +257,8 @@ def init_db() -> None:
     # Домен кассиров живёт в отдельном модуле, чтобы не смешивать бизнес-логику.
     from .cashier_analytics import init_cashier_tables
     init_cashier_tables()
+    from .branch_balance import init_branch_balance_tables
+    init_branch_balance_tables()
     log.info("База данных инициализирована: %s", DB_PATH)
 
 

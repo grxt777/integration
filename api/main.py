@@ -76,6 +76,13 @@ from core.db import (
     update_balance,
 )
 from core.importer import parse_branches_xlsx, parse_xlsx
+from core.branch_balance import (
+    balances_by_local_code_map,
+    get_branch_balance_by_local_code,
+    list_branch_balances,
+    parse_branch_balances_xlsx,
+    replace_branch_balances,
+)
 from core.incassation_router import apply_live_states, build_regional_routes
 from core.cashier_analytics import (
     cashier_analytics,
@@ -326,8 +333,15 @@ async def get_branches(
     incassation: Optional[int] = Query(None, ge=0, le=1, description="0 — без инкассации, 1 — с инкассацией"),
     limit: int = Query(2000, ge=1, le=5000),
     offset: int = Query(0, ge=0),
+    with_balance: bool = Query(True, description="Прикрепить кассовый остаток, если загружен"),
 ):
     rows = list_branches_full(region=region, incassation=incassation, limit=limit, offset=offset)
+    if with_balance:
+        bal_map = balances_by_local_code_map()
+        for b in rows:
+            code = str(b.get("local_code") or "")
+            if code and code in bal_map:
+                b["cash"] = bal_map[code]
     return {
         "branches": rows,
         "count": len(rows),
@@ -357,7 +371,58 @@ async def get_branch_detail(local_code: str):
     branch = get_branch(local_code)
     if not branch:
         raise HTTPException(404, f"Филиал с local_code={local_code!r} не найден")
+    cash = get_branch_balance_by_local_code(local_code)
+    if cash:
+        branch["cash"] = cash
     return branch
+
+
+@app.get("/api/branches/{local_code}/balance", summary="Кассовый остаток филиала")
+async def get_branch_cash_balance(local_code: str):
+    cash = get_branch_balance_by_local_code(local_code)
+    if not cash:
+        raise HTTPException(404, f"Остаток для филиала {local_code!r} не найден — загрузите Excel остатков")
+    return cash
+
+
+@app.get("/api/branch-balances", summary="Все загруженные остатки филиалов")
+async def get_all_branch_balances():
+    rows = list_branch_balances()
+    return {"balances": rows, "count": len(rows)}
+
+
+@app.post("/api/branches/balances/import", summary="Импорт кассовых остатков филиалов (отдельный XLSX)")
+async def import_branch_balances(
+    file: UploadFile = File(..., description="XLSX: Код БХМ, номи, Сўм, лимиты, валюты"),
+):
+    if not file.filename or not file.filename.lower().endswith((".xlsx", ".xlsm")):
+        raise HTTPException(400, "Ожидается .xlsx файл")
+
+    tmp_dir = tempfile.mkdtemp(prefix="branch_bal_import_")
+    tmp_path = os.path.join(tmp_dir, file.filename)
+    try:
+        with open(tmp_path, "wb") as f:
+            shutil.copyfileobj(file.file, f)
+        try:
+            parsed = parse_branch_balances_xlsx(tmp_path)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        stats = replace_branch_balances(parsed["records"])
+        return {
+            "ok": True,
+            "filename": file.filename,
+            "header_row": parsed["header_row"],
+            "columns_detected": parsed["columns"],
+            "total_rows_in_file": parsed["total_rows"],
+            "imported": stats["saved"],
+            "matched_to_branches": stats["matched_to_branches"],
+            "unmatched": stats["unmatched"],
+            "validation_errors": parsed["errors"][:50],
+            "validation_errors_count": len(parsed["errors"]),
+            "note": "Отдельный парсер — реестр филиалов (координаты) не изменяется.",
+        }
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 @app.post("/api/branches/import", summary="Импорт филиалов из XLSX")

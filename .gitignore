@@ -17,7 +17,3 @@ data/
 # Локальные ключи агента
 .arena-keys/
 
-# Offline deploy (Outlook / USB) — katta binary, gitga emas
-bank-platform-offline.tar.gz
-bank-platform-offline.part.*
-SEND-VIA-OUTLOOK.txt

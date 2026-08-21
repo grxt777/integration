@@ -413,6 +413,73 @@
     }
     #route-sidebar.open { display: flex; }
 
+    /* ── Branch cash panel (overlay on map) ── */
+    #branch-cash-panel {
+      position: absolute;
+      top: 10px; right: 10px;
+      width: min(380px, calc(100% - 20px));
+      max-height: calc(100% - 20px);
+      background: rgba(255,255,255,.97);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      z-index: 1100;
+      display: none;
+      flex-direction: column;
+      overflow: hidden;
+      backdrop-filter: blur(18px);
+      box-shadow: var(--shadow-lg);
+    }
+    #branch-cash-panel.open { display: flex; }
+    #branch-cash-panel .bcp-body {
+      overflow-y: auto;
+      padding: 12px 14px 16px;
+      flex: 1;
+      min-height: 0;
+    }
+    #branch-cash-panel .bcp-card {
+      border-radius: 12px;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+    }
+    #branch-cash-panel .bcp-label {
+      font-size: 9px;
+      font-weight: 800;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+    #branch-cash-panel .bcp-value {
+      font-size: 15px;
+      font-weight: 850;
+      margin-top: 3px;
+      line-height: 1.2;
+    }
+    #branch-cash-panel .bcp-hint {
+      font-size: 10px;
+      color: var(--muted);
+      margin-top: 3px;
+    }
+    #branch-cash-panel table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 11px;
+    }
+    #branch-cash-panel th {
+      font-size: 9px;
+      text-transform: uppercase;
+      color: #94a3b8;
+      font-weight: 700;
+      padding: 2px 4px 6px;
+      text-align: right;
+    }
+    #branch-cash-panel th:first-child { text-align: left; }
+    #branch-cash-panel td {
+      padding: 4px;
+      border-top: 1px solid #f1f5f9;
+      vertical-align: top;
+    }
+    #branch-cash-panel td:first-child { text-align: left; padding-left: 0; }
+    #branch-cash-panel td:not(:first-child) { text-align: right; }
+
     .rs-header {
       padding: 12px 14px;
       border-bottom: 1px solid var(--border);
@@ -915,8 +982,13 @@
       <i data-lucide="compass"></i>
     </button>
 
+    <!-- Floating ATMs Toggle Button -->
+    <button id="atms-toggle-btn" class="map-floating-btn" onclick="toggleAtmsLayer()" title="Показать/скрыть банкоматы" style="top:122px;background:#2563eb;color:#fff;border-color:#2563eb;">
+      <i data-lucide="credit-card"></i>
+    </button>
+
     <!-- Floating Branches Toggle Button -->
-    <button id="branches-toggle-btn" class="map-floating-btn" onclick="toggleBranchesLayer()" title="Показать/скрыть филиалы" style="top:122px;">
+    <button id="branches-toggle-btn" class="map-floating-btn" onclick="toggleBranchesLayer()" title="Показать/скрыть филиалы" style="top:164px;">
       <i data-lucide="building-2"></i>
     </button>
 
@@ -959,6 +1031,15 @@
         </div>
       </div>
       <div class="rs-cars" id="rs-cars-list"></div>
+    </div>
+
+    <!-- Branch cash detail panel -->
+    <div id="branch-cash-panel">
+      <div class="rs-header">
+        <h4><i data-lucide="wallet" class="icon-inline"></i> <span id="bcp-title">Касса филиала</span></h4>
+        <button class="rs-close" onclick="closeBranchCashPanel()" title="Закрыть"><i data-lucide="x"></i></button>
+      </div>
+      <div class="bcp-body" id="bcp-body"></div>
     </div>
   </div>
 </div>
@@ -1057,6 +1138,13 @@ function getFilteredATMs() {
 }
 
 function updateMarkersHighlight(filtered) {
+  if (!atmsVisible) {
+    Object.values(markers).forEach(marker => {
+      if (map.hasLayer(marker)) map.removeLayer(marker);
+    });
+    return;
+  }
+
   const isFiltering = currentSearchQuery !== "" || selectedAtmIdsFromModal !== null;
   const filteredSet = new Set(filtered.map(a => a.id));
   
@@ -1072,6 +1160,7 @@ function updateMarkersHighlight(filtered) {
       } else {
         marker.setIcon(makeIcon(st.status, false));
         marker.setOpacity(0.25);
+        if (!map.hasLayer(marker)) marker.addTo(map);
       }
     } else {
       // Normal state (no filter)
@@ -1408,6 +1497,8 @@ function makeIcon(status, isHighlighted = false) {
   });
 }
 
+let atmsVisible = true;
+
 function initMarkers() {
   const points = [];
   ATM_META.forEach(atm => {
@@ -1415,8 +1506,8 @@ function initMarkers() {
     const lon = parseFloat(atm.lon);
     if (!isNaN(lat) && !isNaN(lon) && lat !== 0 && lon !== 0) {
       const m = L.marker([lat, lon], { icon: makeIcon('ok') })
-        .addTo(map)
         .on('click', () => selectAtm(atm.id));
+      if (atmsVisible) m.addTo(map);
       markers[atm.id] = m;
       points.push([lat, lon]);
     }
@@ -1426,6 +1517,35 @@ function initMarkers() {
     const bounds = L.latLngBounds(points);
     map.fitBounds(bounds, { padding: [50, 50] });
   }
+  syncAtmsToggleBtn();
+}
+
+function syncAtmsToggleBtn() {
+  const btn = document.getElementById('atms-toggle-btn');
+  if (!btn) return;
+  if (atmsVisible) {
+    btn.style.background = '#2563eb';
+    btn.style.color = '#fff';
+    btn.style.borderColor = '#2563eb';
+  } else {
+    btn.style.background = '';
+    btn.style.color = '';
+    btn.style.borderColor = '';
+  }
+}
+
+function toggleAtmsLayer() {
+  atmsVisible = !atmsVisible;
+  Object.values(markers).forEach(marker => {
+    if (atmsVisible) {
+      if (!map.hasLayer(marker)) marker.addTo(map);
+    } else if (map.hasLayer(marker)) {
+      map.removeLayer(marker);
+    }
+  });
+  if (atmsVisible) updateMarkersHighlight(getFilteredATMs());
+  syncAtmsToggleBtn();
+  hydrateIcons();
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1435,6 +1555,157 @@ function initMarkers() {
 let branchesLayer   = null;
 let branchesVisible = false;
 let branchesLoaded  = false;
+let branchesCache   = [];
+
+function fmtBranchMoney(v, digits = 0) {
+  if (v === null || v === undefined || v === '') return '—';
+  const n = Number(v);
+  if (Number.isNaN(n)) return '—';
+  return n.toLocaleString('ru-RU', { maximumFractionDigits: digits, minimumFractionDigits: digits });
+}
+
+function getUsdAmount(cash) {
+  if (!cash || !Array.isArray(cash.currencies)) return null;
+  const usd = cash.currencies.find(c => String(c.iso) === '840' || c.code === 'USD');
+  return usd && usd.amount != null ? Number(usd.amount) : null;
+}
+
+function closeBranchCashPanel() {
+  const panel = document.getElementById('branch-cash-panel');
+  if (panel) panel.classList.remove('open');
+}
+
+function openBranchCashPanelByCode(localCode) {
+  const b = branchesCache.find(x => String(x.local_code) === String(localCode));
+  if (b) openBranchCashPanel(b);
+}
+
+function openBranchCashPanel(branch) {
+  const panel = document.getElementById('branch-cash-panel');
+  const body = document.getElementById('bcp-body');
+  const title = document.getElementById('bcp-title');
+  if (!panel || !body) return;
+
+  // marshrut paneli bilan birga ochilmasin
+  const routeSb = document.getElementById('route-sidebar');
+  if (routeSb) routeSb.classList.remove('open');
+
+  const cash = branch.cash || null;
+  const isInc = !!branch.incassation;
+  const code = branch.local_code || '—';
+  if (title) title.textContent = `Касса · ${code}`;
+
+  if (!cash) {
+    body.innerHTML = `
+      <div class="popup-row">Регион: <span>${branch.region || '—'}</span></div>
+      <div class="popup-row">Адрес: <span>${branch.address || '—'}</span></div>
+      <div style="margin-top:14px;padding:12px;border-radius:12px;background:#f8fafc;border:1px solid #e2e8f0;color:#64748b;font-size:13px;line-height:1.45">
+        Кассовый остаток для этого филиала не загружен.
+        Импорт: <b>Импорт → Остатки филиалов</b>.
+      </div>`;
+    panel.classList.add('open');
+    hydrateIcons();
+    return;
+  }
+
+  const usdAmount = getUsdAmount(cash);
+  const limitUsd = cash.limit_usd != null ? Number(cash.limit_usd) : null;
+  let usdStatusHtml = '';
+  if (usdAmount != null && limitUsd != null) {
+    const below = usdAmount < limitUsd;
+    usdStatusHtml = below
+      ? `<div style="margin-top:8px;padding:8px 10px;border-radius:10px;background:#fef2f2;border:1px solid #fecaca;color:#b91c1c;font-size:12px;font-weight:800">
+           ⚠ Ниже минимума — нужно пополнить USD
+         </div>`
+      : `<div style="margin-top:8px;padding:8px 10px;border-radius:10px;background:#f0fdf4;border:1px solid #bbf7d0;color:#15803d;font-size:12px;font-weight:800">
+           ✓ В норме — USD не ниже минимума
+         </div>`;
+  }
+
+  const usdCardBorder = (usdAmount != null && limitUsd != null && usdAmount < limitUsd)
+    ? 'background:#fef2f2;border:1px solid #fecaca'
+    : 'background:#eff6ff;border:1px solid #bfdbfe';
+  const usdValueColor = (usdAmount != null && limitUsd != null && usdAmount < limitUsd)
+    ? '#991b1b' : '#1e3a8a';
+
+  const usage = cash.usage_pct != null
+    ? `<div style="margin:10px 0 4px;height:6px;background:#e2e8f0;border-radius:99px;overflow:hidden">
+         <div style="height:100%;width:${Math.min(100, cash.usage_pct)}%;background:${cash.usage_pct > 90 ? '#dc2626' : cash.usage_pct > 70 ? '#d97706' : '#16a34a'}"></div>
+       </div>
+       <div style="font-size:10px;color:#64748b;margin-bottom:10px">Использовано лимита (сўм): <b>${cash.usage_pct}%</b></div>`
+    : '';
+
+  const ccyRows = (cash.currencies || [])
+    .filter(c => c.amount !== null && c.amount !== undefined)
+    .map(c => {
+      const isUsd = String(c.iso) === '840';
+      const warn = isUsd && limitUsd != null && Number(c.amount) < limitUsd;
+      return `
+        <tr style="${warn ? 'background:#fef2f2' : ''}">
+          <td>${c.name_ru || c.name}<br><span style="font-size:9px;color:#94a3b8">${c.code} · ${c.iso}</span></td>
+          <td style="font-weight:700;${warn ? 'color:#b91c1c' : ''}">${fmtBranchMoney(c.amount, 2)}</td>
+          <td style="color:#64748b">${fmtBranchMoney(c.rate_uzs, 0)}</td>
+          <td>${fmtBranchMoney(c.uzs_equivalent, 0)}</td>
+        </tr>`;
+    }).join('');
+
+  body.innerHTML = `
+    <div style="font-size:12px;font-weight:800;color:#0f172a;margin-bottom:4px">${cash.branch_name || branch.address || code}</div>
+    <div class="popup-row">Код: <span>${code}${branch.number ? ' · №' + branch.number : ''}</span></div>
+    <div class="popup-row">Регион: <span>${branch.region || '—'}</span></div>
+    <div class="popup-row">Тип: <span style="color:${isInc ? '#7c3aed' : '#64748b'};font-weight:700">
+      ${isInc ? 'Для выезда инкассаторов' : 'Обычный филиал'}
+    </span></div>
+
+    <div class="bcp-card" style="margin-top:12px;background:#f0fdf4;border-color:#bbf7d0">
+      <div class="bcp-label" style="color:#15803d">Остаток (сўм)</div>
+      <div class="bcp-value" style="color:#14532d">${fmtBranchMoney(cash.balance_uzs)}</div>
+      <div class="bcp-hint">Сейчас в кассе</div>
+    </div>
+
+    <div class="bcp-card" style="margin-top:8px;background:#eff6ff;border-color:#bfdbfe">
+      <div class="bcp-label" style="color:#1d4ed8">Лимит сўм (максимум)</div>
+      <div class="bcp-value" style="color:#1e3a8a;font-size:14px">${fmtBranchMoney(cash.limit_uzs)} <span style="font-size:10px;font-weight:700">сўм</span></div>
+      <div class="bcp-hint">Столько максимум можно держать в сўм</div>
+    </div>
+    ${usage}
+
+    <div class="bcp-card" style="margin-top:8px;${usdCardBorder}">
+      <div class="bcp-label" style="color:${usdValueColor}">Лимит USD (минимум)</div>
+      <div style="display:flex;justify-content:space-between;gap:10px;margin-top:6px;align-items:flex-end">
+        <div>
+          <div style="font-size:10px;color:#64748b;font-weight:700">Сейчас USD</div>
+          <div style="font-size:15px;font-weight:850;color:${usdValueColor}">${fmtBranchMoney(usdAmount, 2)}</div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-size:10px;color:#64748b;font-weight:700">Мин. лимит</div>
+          <div style="font-size:15px;font-weight:850;color:${usdValueColor}">${fmtBranchMoney(limitUsd, 2)}</div>
+        </div>
+      </div>
+      <div class="bcp-hint">Если USD ниже минимума — касса в дефиците (красный)</div>
+      ${usdStatusHtml}
+    </div>
+
+    <div style="font-size:10px;font-weight:800;color:#334155;margin:14px 0 6px;text-transform:uppercase;letter-spacing:.04em">Валюта · курс · в сўм</div>
+    ${ccyRows ? `
+      <table>
+        <thead>
+          <tr>
+            <th>Валюта</th>
+            <th>Сумма</th>
+            <th>Курс</th>
+            <th>В сўм</th>
+          </tr>
+        </thead>
+        <tbody>${ccyRows}</tbody>
+      </table>
+    ` : `<div style="font-size:12px;color:#94a3b8">Валютные остатки не указаны (− / пусто)</div>`}
+  `;
+
+  panel.classList.add('open');
+  hydrateIcons();
+  if (map && map.closePopup) map.closePopup();
+}
 
 function makeBranchIcon(incassation) {
   const c = incassation ? '#7c3aed' : '#64748b';
@@ -1457,6 +1728,7 @@ async function loadBranches() {
     if (!res.ok) throw new Error('Failed to fetch branches');
     const data = await res.json();
     const branches = data.branches || [];
+    branchesCache = branches;
 
     if (branchesLayer) map.removeLayer(branchesLayer);
     branchesLayer = L.layerGroup();
@@ -1471,15 +1743,23 @@ async function loadBranches() {
       if (isInc) withInc++; else withoutInc++;
       plotted++;
 
+      const cash = b.cash || null;
       const marker = L.marker([lat, lon], { icon: makeBranchIcon(isInc) });
       marker.bindPopup(`
         <div class="popup-title">${appIcon('building-2')}${b.local_code || ''}${b.number ? ' · №' + b.number : ''}</div>
         <div class="popup-row">Регион: <span>${b.region || '—'}</span></div>
-        <div class="popup-row">Адрес: <span>${b.address || '—'}</span></div>
+        <div class="popup-row" style="max-width:220px">Адрес: <span>${b.address || '—'}</span></div>
         <div class="popup-row">Тип: <span style="color:${isInc ? '#7c3aed' : '#64748b'};font-weight:700">
           ${isInc ? 'Для выезда инкассаторов' : 'Обычный филиал'}
         </span></div>
-      `);
+        <button onclick="openBranchCashPanelByCode('${String(b.local_code || '').replace(/'/g, "\\'")}')"
+          style="margin-top:10px;width:100%;padding:8px 10px;border:0;border-radius:10px;background:#0d9488;color:#fff;font-weight:800;font-size:12px;cursor:pointer">
+          ${cash ? 'Открыть кассу филиала →' : 'Касса не загружена'}
+        </button>
+      `, { maxWidth: 260 });
+      marker.on('click', () => {
+        if (cash) openBranchCashPanel(b);
+      });
       branchesLayer.addLayer(marker);
     });
 
@@ -2375,7 +2655,7 @@ async function buildRoute(filterStatus) {
 
   // Обновляем sidebar
   renderRouteSidebar(carRoutes, totalStops, totalDistKm, totalTimeMin);
-  document.getElementById('route-sidebar').classList.add('open');
+  openRouteSidebar();
 }
 
 function greedyRouteFromDepot(atms) {
@@ -2552,7 +2832,7 @@ function renderRegionalRoutes(data) {
 
   const sb = document.getElementById('route-sidebar');
   if (!sb) return;
-  sb.classList.add('open');
+  openRouteSidebar();
   document.getElementById('rs-cars-count').textContent = data.cars.length;
   document.getElementById('rs-stops-count').textContent = data.total_stops;
   document.getElementById('rs-distance').textContent = Number(data.total_dist_km || 0).toFixed(1) + ' км';
@@ -2594,6 +2874,11 @@ function renderRegionalRoutes(data) {
 
 function closeSidebar() {
   document.getElementById('route-sidebar').classList.remove('open');
+}
+
+function openRouteSidebar() {
+  closeBranchCashPanel();
+  document.getElementById('route-sidebar').classList.add('open');
 }
 
 function clearRoute() {
@@ -2734,7 +3019,7 @@ function renderWSRoute(routeData) {
   // ── Sidebar ──────────────────────────────────────────────
   const sb = document.getElementById('route-sidebar');
   if (!sb) return;
-  sb.classList.add('open');
+  openRouteSidebar();
 
   document.getElementById('rs-cars-count').textContent  = routeData.cars.length;
   document.getElementById('rs-stops-count').textContent = routeData.total_stops;
