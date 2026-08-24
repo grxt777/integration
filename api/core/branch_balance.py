@@ -16,21 +16,21 @@ import openpyxl
 from openpyxl.utils import get_column_letter
 
 from .db import _connect
+from .sqb_rates import latest_rates, uzs_equivalent
 
 log = logging.getLogger(__name__)
 
-# ISO 4217 numeric → meta. rate_uzs ≈ 1 birlik valyuta uchun so'm (ko'rsatish uchun).
-# Kerak bo'lsa keyinroq Excel yoki API orqali yangilanadi.
+# ISO 4217 numeric → meta. So'm ekvivalenti SQB xarid kursi bilan.
 CURRENCY_META: Dict[str, Dict[str, Any]] = {
-    "840": {"code": "USD", "name": "АҚШ доллари", "name_ru": "Доллар США", "rate_uzs": 12800.0},
-    "392": {"code": "JPY", "name": "Йена", "name_ru": "Японская иена", "rate_uzs": 85.0},
-    "643": {"code": "RUB", "name": "Россия рубли", "name_ru": "Российский рубль", "rate_uzs": 140.0},
-    "756": {"code": "CHF", "name": "Швейцария франки", "name_ru": "Швейцарский франк", "rate_uzs": 14500.0},
-    "826": {"code": "GBP", "name": "Фунт стерлинг", "name_ru": "Фунт стерлингов", "rate_uzs": 16200.0},
-    "978": {"code": "EUR", "name": "Евро", "name_ru": "Евро", "rate_uzs": 13800.0},
-    "398": {"code": "KZT", "name": "Тенге", "name_ru": "Тенге", "rate_uzs": 26.0},
-    "156": {"code": "CNY", "name": "Юан", "name_ru": "Юань", "rate_uzs": 1760.0},
-    "972": {"code": "TJS", "name": "Сомони", "name_ru": "Сомони", "rate_uzs": 1180.0},
+    "840": {"code": "USD", "name": "АҚШ доллари", "name_ru": "Доллар США"},
+    "392": {"code": "JPY", "name": "Йена", "name_ru": "Японская иена"},
+    "643": {"code": "RUB", "name": "Россия рубли", "name_ru": "Российский рубль"},
+    "756": {"code": "CHF", "name": "Швейцария франки", "name_ru": "Швейцарский франк"},
+    "826": {"code": "GBP", "name": "Фунт стерлинг", "name_ru": "Фунт стерлингов"},
+    "978": {"code": "EUR", "name": "Евро", "name_ru": "Евро"},
+    "398": {"code": "KZT", "name": "Тенге", "name_ru": "Тенге"},
+    "156": {"code": "CNY", "name": "Юан", "name_ru": "Юань"},
+    "972": {"code": "TJS", "name": "Сомони", "name_ru": "Сомони"},
 }
 
 _FIXED_ALIASES = {
@@ -370,28 +370,36 @@ def replace_branch_balances(records: List[Dict[str, Any]]) -> Dict[str, int]:
     }
 
 
-def _enrich_balance_row(row: Dict[str, Any]) -> Dict[str, Any]:
+def _enrich_balance_row(row: Dict[str, Any], rates_by_iso: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     currencies_raw = {}
     try:
         currencies_raw = json.loads(row.get("currencies_json") or "{}")
     except json.JSONDecodeError:
         currencies_raw = {}
 
+    if rates_by_iso is None:
+        rates_by_iso = (latest_rates().get("by_iso") or {})
+
     currencies = []
+    fx_uzs_parts: List[float] = []
     for iso, meta in CURRENCY_META.items():
         amount = currencies_raw.get(iso)
-        if amount is None and iso not in currencies_raw:
-            # key yo'q yoki null
-            amount = currencies_raw.get(iso)
-        rate = meta["rate_uzs"]
-        uzs_eq = None if amount is None else round(float(amount) * rate, 2)
+        rate_row = rates_by_iso.get(str(iso)) or {}
+        buy = rate_row.get("buy")
+        sell = rate_row.get("sell")
+        applied = buy if buy is not None and float(buy) > 0 else None
+        uzs_eq = uzs_equivalent(amount, iso, rates_by_iso)
+        if uzs_eq is not None:
+            fx_uzs_parts.append(uzs_eq)
         currencies.append({
             "iso": iso,
             "code": meta["code"],
             "name": meta["name"],
             "name_ru": meta["name_ru"],
             "amount": amount,
-            "rate_uzs": rate,
+            "buy": buy,
+            "sell": sell,
+            "rate_uzs": applied,
             "uzs_equivalent": uzs_eq,
         })
 
@@ -422,16 +430,18 @@ def _enrich_balance_row(row: Dict[str, Any]) -> Dict[str, Any]:
         "match_method": row.get("match_method"),
         "imported_at": row.get("imported_at"),
         "currencies": currencies,
+        "fx_uzs_equivalent": round(sum(fx_uzs_parts), 2) if fx_uzs_parts else None,
     }
 
 
 def list_branch_balances() -> List[Dict[str, Any]]:
     init_branch_balance_tables()
+    rates_by_iso = (latest_rates().get("by_iso") or {})
     with _connect() as conn:
         rows = [dict(r) for r in conn.execute(
             "SELECT * FROM branch_balances ORDER BY bxm_code, id"
         ).fetchall()]
-    return [_enrich_balance_row(r) for r in rows]
+    return [_enrich_balance_row(r, rates_by_iso) for r in rows]
 
 
 def get_branch_balance_by_local_code(local_code: str) -> Optional[Dict[str, Any]]:
@@ -446,7 +456,7 @@ def get_branch_balance_by_local_code(local_code: str) -> Optional[Dict[str, Any]
             """,
             (local_code, local_code, local_code),
         ).fetchone()
-    return _enrich_balance_row(dict(row)) if row else None
+    return _enrich_balance_row(dict(row), latest_rates().get("by_iso") or {}) if row else None
 
 
 def balances_by_local_code_map() -> Dict[str, Dict[str, Any]]:
@@ -507,10 +517,12 @@ def branch_cash_analytics() -> Dict[str, Any]:
         lim_uzs = _sum_optional([r.get("limit_uzs") for r in rows])
         lim_usd = _sum_optional([r.get("limit_usd") for r in rows])
         usd_amt = _sum_optional([r.get("usd_amount") for r in rows])
+        fx_uzs_total = _sum_optional([r.get("fx_uzs_equivalent") for r in rows])
         ccy_sums: Dict[str, Dict[str, Any]] = {}
         for iso, meta in CURRENCY_META.items():
             amounts = []
             uzs_eqs = []
+            buy = sell = None
             for r in rows:
                 for c in r.get("currencies") or []:
                     if str(c.get("iso")) != iso:
@@ -519,16 +531,21 @@ def branch_cash_analytics() -> Dict[str, Any]:
                         amounts.append(float(c["amount"]))
                     if c.get("uzs_equivalent") is not None:
                         uzs_eqs.append(float(c["uzs_equivalent"]))
+                    if c.get("buy") is not None:
+                        buy = c.get("buy")
+                    if c.get("sell") is not None:
+                        sell = c.get("sell")
             ccy_sums[iso] = {
                 "iso": iso,
                 "code": meta["code"],
                 "name_ru": meta["name_ru"],
                 "amount": round(sum(amounts), 2) if amounts else None,
+                "buy": buy,
+                "sell": sell,
+                "rate_uzs": buy if buy is not None and float(buy) > 0 else None,
                 "uzs_equivalent": round(sum(uzs_eqs), 2) if uzs_eqs else None,
-                "rate_uzs": meta["rate_uzs"],
                 "branches_with_amount": len(amounts),
             }
-        fx_uzs_total = _sum_optional([v["uzs_equivalent"] for v in ccy_sums.values()])
         grand_uzs = None
         parts = [x for x in (bal_uzs, fx_uzs_total) if x is not None]
         if parts:
@@ -583,12 +600,19 @@ def branch_cash_analytics() -> Dict[str, Any]:
                 "usage_pct": b.get("usage_pct"),
                 "usd_below_minimum": b.get("usd_below_minimum"),
                 "has_money": b.get("has_money"),
+                "currencies": [
+                    {"code": c["code"], "iso": c["iso"], "amount": c.get("amount")}
+                    for c in (b.get("currencies") or [])
+                    if c.get("amount") is not None
+                ],
             }
             for b in sorted(
                 with_warehouse,
                 key=lambda x: (-(x.get("balance_uzs") or 0), str(x.get("matched_local_code") or "")),
             )
         ],
+        "note": "Valyuta o'z birligida; jami so'm = sўm + valyuta×SQB xarid.",
+        "exchange_rates": latest_rates(),
         "math_check": {
             "regions_sum_equals_overall_uzs": check_ok,
             "overall_balance_uzs": overall.get("balance_uzs"),

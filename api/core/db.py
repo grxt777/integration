@@ -259,6 +259,8 @@ def init_db() -> None:
     init_cashier_tables()
     from .branch_balance import init_branch_balance_tables
     init_branch_balance_tables()
+    from .sqb_rates import init_sqb_rate_tables
+    init_sqb_rate_tables()
     log.info("База данных инициализирована: %s", DB_PATH)
 
 

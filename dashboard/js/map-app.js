@@ -552,8 +552,7 @@ function openBranchCashPanel(branch) {
   const usage = cash.usage_pct != null
     ? `<div style="margin:10px 0 4px;height:6px;background:#e2e8f0;border-radius:99px;overflow:hidden">
          <div style="height:100%;width:${Math.min(100, cash.usage_pct)}%;background:${cash.usage_pct > 90 ? '#dc2626' : cash.usage_pct > 70 ? '#d97706' : '#16a34a'}"></div>
-       </div>
-       <div style="font-size:10px;color:#64748b;margin-bottom:10px">Использовано лимита (сўм): <b>${cash.usage_pct}%</b></div>`
+       </div>`
     : '';
 
   const ccyRows = (cash.currencies || [])
@@ -565,8 +564,8 @@ function openBranchCashPanel(branch) {
         <tr style="${warn ? 'background:#fef2f2' : ''}">
           <td>${c.name_ru || c.name}<br><span style="font-size:9px;color:#94a3b8">${c.code} · ${c.iso}</span></td>
           <td style="font-weight:700;${warn ? 'color:#b91c1c' : ''}">${fmtBranchMoney(c.amount, 2)}</td>
-          <td style="color:#64748b">${fmtBranchMoney(c.rate_uzs, 0)}</td>
-          <td>${fmtBranchMoney(c.uzs_equivalent, 0)}</td>
+          <td style="color:#1d4ed8">${c.rate_uzs != null ? fmtBranchMoney(c.rate_uzs, 0) : '—'}</td>
+          <td>${c.uzs_equivalent != null ? fmtBranchMoney(c.uzs_equivalent, 0) : '—'}</td>
         </tr>`;
     }).join('');
 
@@ -607,19 +606,20 @@ function openBranchCashPanel(branch) {
       ${usdStatusHtml}
     </div>
 
-    <div style="font-size:10px;font-weight:800;color:#334155;margin:14px 0 6px;text-transform:uppercase;letter-spacing:.04em">Валюта · курс · в сўм</div>
+    <div style="font-size:10px;font-weight:800;color:#334155;margin:14px 0 6px;text-transform:uppercase;letter-spacing:.04em">Valyuta · SQB xarid</div>
     ${ccyRows ? `
       <table>
         <thead>
           <tr>
-            <th>Валюта</th>
-            <th>Сумма</th>
-            <th>Курс</th>
-            <th>В сўм</th>
+            <th>Valyuta</th>
+            <th>Summa</th>
+            <th>Xarid</th>
+            <th>≈ sўm</th>
           </tr>
         </thead>
         <tbody>${ccyRows}</tbody>
       </table>
+      ${cash.fx_uzs_equivalent != null ? `<div style="font-size:10px;color:#0f766e;margin-top:8px;font-weight:700">Valyuta jami ≈ ${fmtBranchMoney(cash.fx_uzs_equivalent, 0)} sўm</div>` : ''}
     ` : `<div style="font-size:12px;color:#94a3b8">Валютные остатки не указаны (− / пусто)</div>`}
   `;
 

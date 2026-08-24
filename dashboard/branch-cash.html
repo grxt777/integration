@@ -15,68 +15,169 @@
       --text: #0f172a;
       --muted: #64748b;
       --primary: #0d9488;
-      --shadow: 0 12px 32px rgba(15, 23, 42, .08);
+      --shadow: 0 8px 24px rgba(15, 23, 42, .06);
+      --radius: 16px;
     }
     body {
-      font-family: "Segoe UI", Inter, ui-sans-serif, system-ui, sans-serif;
+      font-family: "Segoe UI", ui-sans-serif, system-ui, sans-serif;
       background:
-        radial-gradient(circle at 0% 0%, rgba(13,148,136,.14), transparent 40%),
-        radial-gradient(circle at 100% 0%, rgba(37,99,235,.10), transparent 35%),
+        radial-gradient(circle at 0% 0%, rgba(13,148,136,.12), transparent 42%),
+        radial-gradient(circle at 100% 0%, rgba(37,99,235,.08), transparent 38%),
         var(--bg);
       color: var(--text);
       min-height: 100vh;
     }
     header {
-      height: 60px; padding: 0 22px; display: flex; align-items: center; gap: 12px;
-      background: rgba(255,255,255,.92); border-bottom: 1px solid var(--border);
+      height: 56px; padding: 0 22px; display: flex; align-items: center; gap: 12px;
+      background: rgba(255,255,255,.94); border-bottom: 1px solid var(--border);
       backdrop-filter: blur(14px); position: sticky; top: 0; z-index: 20;
     }
-    header h1 { font-size: 17px; font-weight: 850; letter-spacing: -.02em; }
+    header h1 { font-size: 16px; font-weight: 800; letter-spacing: -.02em; }
     .badge {
       background: linear-gradient(135deg, #0d9488, #2dd4bf);
       color: #fff; border-radius: 999px; padding: 4px 11px; font-size: 11px; font-weight: 800;
     }
     .spacer { flex: 1; }
+    .nav { display: flex; gap: 4px; flex-wrap: wrap; }
     .nav a {
       text-decoration: none; color: var(--muted); font-size: 13px; font-weight: 700;
-      padding: 8px 12px; border-radius: 10px; border: 1px solid transparent;
+      padding: 7px 11px; border-radius: 10px; border: 1px solid transparent;
     }
     .nav a:hover { color: var(--primary); border-color: #99f6e4; background: #f0fdfa; }
-    .page { width: min(1180px, calc(100vw - 28px)); margin: 24px auto 48px; }
-    .hero { margin-bottom: 18px; }
-    .hero h2 { font-size: clamp(22px, 3vw, 30px); font-weight: 850; letter-spacing: -.03em; }
-    .hero p { color: var(--muted); margin-top: 8px; line-height: 1.55; max-width: 720px; }
-    .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
-    @media (max-width: 900px) { .kpis { grid-template-columns: 1fr 1fr; } }
+
+    .page {
+      width: min(1120px, calc(100vw - 32px));
+      margin: 22px auto 56px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .hero {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px 20px;
+      box-shadow: var(--shadow);
+    }
+    .hero h2 { font-size: clamp(20px, 2.6vw, 26px); font-weight: 850; letter-spacing: -.03em; }
+    .hero p { color: var(--muted); margin-top: 6px; line-height: 1.5; max-width: 720px; font-size: 13px; }
+    .hero-meta { margin-top: 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+
+    .section-title {
+      font-size: 13px; font-weight: 800; color: #334155;
+      display: flex; align-items: center; gap: 8px;
+      margin: 2px 0 0;
+      text-transform: uppercase; letter-spacing: .04em;
+    }
+
+    .kpis {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+    }
+    @media (max-width: 520px) { .kpis { grid-template-columns: 1fr; } }
+
     .kpi {
-      background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
-      padding: 14px 16px; box-shadow: var(--shadow);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+      box-shadow: var(--shadow);
+      min-height: 96px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
     }
     .kpi .l { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
-    .kpi .v { font-size: 20px; font-weight: 850; margin-top: 6px; line-height: 1.15; }
-    .kpi .h { font-size: 11px; color: var(--muted); margin-top: 4px; }
-    .grid-2 { display: grid; grid-template-columns: 1.1fr 1fr; gap: 14px; margin-bottom: 14px; }
-    @media (max-width: 960px) { .grid-2 { grid-template-columns: 1fr; } }
-    .card {
-      background: var(--surface); border: 1px solid var(--border); border-radius: 18px;
-      padding: 16px; box-shadow: var(--shadow);
+    .kpi .v { font-size: clamp(16px, 1.8vw, 20px); font-weight: 850; margin-top: 8px; line-height: 1.2; word-break: break-word; }
+    .kpi .h { font-size: 11px; color: var(--muted); margin-top: 6px; }
+
+    .ccy-panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+      box-shadow: var(--shadow);
     }
-    .card h3 { font-size: 14px; font-weight: 800; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
-    .chart-box { position: relative; height: 300px; }
-    .chart-box.tall { height: 360px; }
+    .ccy-panel > .section-title { margin-bottom: 12px; text-transform: none; letter-spacing: 0; font-size: 14px; color: var(--text); }
+    .ccy-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+    }
+    @media (max-width: 900px) { .ccy-grid { grid-template-columns: repeat(2, 1fr); } }
+    @media (max-width: 520px) { .ccy-grid { grid-template-columns: 1fr; } }
+
+    .ccy-card {
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px 14px;
+      border-top-width: 3px;
+      min-height: 92px;
+    }
+    .ccy-card .code { font-size: 12px; font-weight: 800; letter-spacing: .04em; }
+    .ccy-card .name { font-size: 11px; color: var(--muted); margin-top: 2px; }
+    .ccy-card .amt { font-size: 16px; font-weight: 850; margin-top: 10px; line-height: 1.2; }
+    .ccy-card .cnt { font-size: 10px; color: var(--muted); margin-top: 4px; }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+    @media (max-width: 900px) { .grid-2 { grid-template-columns: 1fr; } }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+      box-shadow: var(--shadow);
+      min-width: 0;
+    }
+    .card h3 {
+      font-size: 14px; font-weight: 800; margin-bottom: 12px;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .chart-box { position: relative; height: 280px; }
+    .chart-box.pie { position: relative; height: 320px; }
+
     table { width: 100%; border-collapse: collapse; font-size: 12px; }
-    th { text-align: left; font-size: 10px; text-transform: uppercase; color: #94a3b8; padding: 8px 6px; border-bottom: 1px solid var(--border); }
-    td { padding: 8px 6px; border-bottom: 1px solid #f1f5f9; }
-    th.num, td.num { text-align: right; }
+    th {
+      text-align: left; font-size: 10px; text-transform: uppercase; color: #94a3b8;
+      padding: 8px 8px; border-bottom: 1px solid var(--border); white-space: nowrap;
+      position: sticky; top: 0; background: #fff; z-index: 1;
+    }
+    td { padding: 8px; border-bottom: 1px solid #f1f5f9; vertical-align: top; }
+    th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
+
     .check {
       display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 800;
       padding: 4px 10px; border-radius: 999px;
     }
     .check.ok { background: #dcfce7; color: #166534; }
     .check.bad { background: #fee2e2; color: #991b1b; }
-    .scroll { max-height: 420px; overflow: auto; border: 1px solid var(--border); border-radius: 12px; }
+
+    .scroll {
+      max-height: 420px;
+      overflow: auto;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+    }
     .muted { color: var(--muted); font-size: 13px; }
-    .err { color: #b91c1c; padding: 20px; }
+    .err { color: #b91c1c; padding: 8px 0; }
+    .ccy-chip {
+      display: inline-block; font-size: 10px; font-weight: 700; color: #334155;
+      background: #f1f5f9; border-radius: 6px; padding: 2px 6px; margin: 1px; white-space: nowrap;
+    }
+    .buy { color: #1d4ed8; font-weight: 800; }
+    .sell { color: #dc2626; font-weight: 800; }
+    .diff-neg { color: #b91c1c; }
+    .diff-pos { color: #15803d; }
+    .rates-table th { text-align: center; }
+    .rates-table td.num { font-variant-numeric: tabular-nums; }
   </style>
 </head>
 <body>
@@ -86,6 +187,7 @@
   <span class="spacer"></span>
   <nav class="nav">
     <a href="/dashboard/map.html">← Карта</a>
+    <a href="/dashboard/import-sqb-rates.html">Kurslar</a>
     <a href="/dashboard/import-branch-balances.html">Импорт остатков</a>
     <a href="/dashboard/index.html">Главная</a>
   </nav>
@@ -93,20 +195,33 @@
 
 <div class="page">
   <div class="hero">
-    <h2>Сколько денег в филиалах</h2>
+    <h2>Остатки по филиалам</h2>
     <p>
-      Сводка только по филиалам, у которых загружены остатки (связь по <b>Код БХМ</b>).
-      Итог = сумма филиалов; сумма по регионам должна совпадать с общим итогом.
+      Только филиалы с загруженными остатками (связь по <b>Код БХМ</b>).
+      Сўм и валюты в своей единице. Эквивалент в сўм — по <b>SQB xarid</b> (Excel: Xarid / Sotuv).
     </p>
-    <div id="meta" class="muted" style="margin-top:10px">Загрузка…</div>
+    <div id="meta" class="hero-meta">Загрузка…</div>
   </div>
 
   <div class="kpis" id="kpis"></div>
 
+  <div class="card">
+    <h3><i data-lucide="banknote" style="width:16px;height:16px"></i> SQB kurslari (xarid / sotuv)</h3>
+    <div class="scroll" id="ratesTable"></div>
+  </div>
+
+  <div class="ccy-panel">
+    <div class="section-title">
+      <i data-lucide="coins" style="width:16px;height:16px"></i>
+      Валюты · SQB xarid
+    </div>
+    <div class="ccy-grid" id="ccyGrid"></div>
+  </div>
+
   <div class="grid-2">
     <div class="card">
       <h3><i data-lucide="pie-chart" style="width:16px;height:16px"></i> Остаток сўм по регионам</h3>
-      <div class="chart-box"><canvas id="chartPie"></canvas></div>
+      <div class="chart-box pie"><canvas id="chartPie"></canvas></div>
     </div>
     <div class="card">
       <h3><i data-lucide="bar-chart-3" style="width:16px;height:16px"></i> Топ регионов по сўм</h3>
@@ -114,19 +229,13 @@
     </div>
   </div>
 
-  <div class="grid-2">
-    <div class="card">
-      <h3><i data-lucide="coins" style="width:16px;height:16px"></i> Валюты (сумма)</h3>
-      <div class="chart-box"><canvas id="chartCcy"></canvas></div>
-    </div>
-    <div class="card">
-      <h3><i data-lucide="table-2" style="width:16px;height:16px"></i> Таблица по регионам</h3>
-      <div class="scroll" id="regionTable"></div>
-    </div>
+  <div class="card">
+    <h3><i data-lucide="table-2" style="width:16px;height:16px"></i> Таблица по регионам</h3>
+    <div class="scroll" id="regionTable"></div>
   </div>
 
-  <div class="card" style="margin-top:14px">
-    <h3><i data-lucide="building-2" style="width:16px;height:16px"></i> Филиалы со складом / остатками</h3>
+  <div class="card">
+    <h3><i data-lucide="building-2" style="width:16px;height:16px"></i> Филиалы с остатками</h3>
     <div class="scroll" id="branchTable"></div>
   </div>
 </div>
@@ -134,6 +243,17 @@
 <script>
   lucide.createIcons();
   const API = location.origin;
+  const fmtDate = (iso) => {
+    if (!iso) return '—';
+    const [y, m, d] = String(iso).split('-');
+    return y && m && d ? `${d}/${m}/${String(y).slice(-2)}` : iso;
+  };
+  const fmtDiff = (v) => {
+    if (v === null || v === undefined) return '—';
+    const n = Number(v);
+    const s = (n > 0 ? '+' : '') + n.toLocaleString('ru-RU', { maximumFractionDigits: 0 });
+    return s;
+  };
   const fmt = (v, d = 0) => {
     if (v === null || v === undefined || v === '') return '—';
     const n = Number(v);
@@ -160,21 +280,83 @@
   function render(data) {
     const o = data.overall || {};
     const check = data.math_check || {};
+    const xr = data.exchange_rates || {};
     const ok = !!check.regions_sum_equals_overall_uzs;
+
     document.getElementById('meta').innerHTML =
-      `В реестре: <b>${data.total_branches_in_registry || 0}</b> филиалов ·
-       со складом: <b>${data.warehouse_branches || 0}</b>
-       <span class="check ${ok ? 'ok' : 'bad'}" style="margin-left:8px">${ok ? '✓ сумма регионов = итог' : '⚠ сумма не сходится'}</span>`;
+      `<span>В реестре: <b>${data.total_branches_in_registry || 0}</b> филиалов · с остатками: <b>${data.warehouse_branches || 0}</b></span>
+       <span class="check ${ok ? 'ok' : 'bad'}">${ok ? '✓ сумма регионов (сўм) = итог' : '⚠ сумма сўм не сходится'}</span>
+       ${xr.current_date ? `<span class="muted">Kurs: SQB xarid · ${fmtDate(xr.current_date)}</span>` : ''}`;
 
     document.getElementById('kpis').innerHTML = `
-      <div class="kpi"><div class="l">Всего остаток (сўм)</div><div class="v" style="color:#14532d">${fmt(o.balance_uzs)}</div><div class="h">${o.branches_with_uzs || 0} филиалов с сўм</div></div>
-      <div class="kpi"><div class="l">Лимит сўм (макс.)</div><div class="v" style="color:#1e3a8a">${fmt(o.limit_uzs)}</div><div class="h">Использовано ${o.usage_pct != null ? o.usage_pct + '%' : '—'}</div></div>
-      <div class="kpi"><div class="l">USD всего</div><div class="v" style="color:#9a3412">${fmt(o.usd_amount, 2)}</div><div class="h">Мин. лимиты Σ ${fmt(o.limit_usd, 2)}</div></div>
-      <div class="kpi"><div class="l">Итого сўм + FX</div><div class="v">${fmt(o.grand_total_uzs)}</div><div class="h">FX экв. ${fmt(o.fx_uzs_equivalent_total)}</div></div>
+      <div class="kpi">
+        <div class="l">Всего сўм</div>
+        <div class="v" style="color:#14532d">${fmt(o.balance_uzs)}</div>
+        <div class="h">${o.branches_with_uzs || 0} филиалов · только сўм</div>
+      </div>
+      <div class="kpi">
+        <div class="l">Всего USD</div>
+        <div class="v" style="color:#9a3412">${fmt(o.usd_amount, 2)}</div>
+        <div class="h">В долларах</div>
+      </div>
+      <div class="kpi">
+        <div class="l">Лимит сўм (макс.)</div>
+        <div class="v" style="color:#1e3a8a">${fmt(o.limit_uzs)}</div>
+        <div class="h">Максимальный лимит по сўм</div>
+      </div>
     `;
 
-    const regions = (data.by_region || []).filter(r => (r.balance_uzs || 0) > 0);
-    const top = regions.slice(0, 12);
+    const rateRows = xr.rows || [];
+    const prevLabel = xr.prev_date ? fmtDate(xr.prev_date) : 'Oldingi';
+    const curLabel = xr.current_date ? fmtDate(xr.current_date) : 'Joriy';
+    document.getElementById('ratesTable').innerHTML = rateRows.length ? `
+      <table class="rates-table">
+        <thead>
+          <tr>
+            <th colspan="2">${prevLabel}</th>
+            <th rowspan="2" style="text-align:left;vertical-align:bottom">Valyuta nomi</th>
+            <th colspan="2">${curLabel}</th>
+            <th colspan="2">Farq</th>
+          </tr>
+          <tr>
+            <th class="buy">Xarid</th><th class="sell">Sotuv</th>
+            <th class="buy">Xarid</th><th class="sell">Sotuv</th>
+            <th class="buy">Xarid</th><th class="sell">Sotuv</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rateRows.map(r => `
+            <tr>
+              <td class="num buy">${fmt(r.prev_buy)}</td>
+              <td class="num sell">${fmt(r.prev_sell)}</td>
+              <td>${r.name || r.code}<span class="muted">-${r.iso}</span></td>
+              <td class="num buy">${fmt(r.buy)}</td>
+              <td class="num sell">${fmt(r.sell)}</td>
+              <td class="num ${r.diff_buy < 0 ? 'diff-neg' : (r.diff_buy > 0 ? 'diff-pos' : '')}">${fmtDiff(r.diff_buy)}</td>
+              <td class="num ${r.diff_sell < 0 ? 'diff-neg' : (r.diff_sell > 0 ? 'diff-pos' : '')}">${fmtDiff(r.diff_sell)}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>` : `<div class="muted" style="padding:12px">Kurslar yo'q. Excelni <a href="/dashboard/import-sqb-rates.html">shu yerdan</a> yuklang.</div>`;
+
+    const ccy = (o.currencies || []).filter(c => c.amount != null);
+    document.getElementById('ccyGrid').innerHTML = ccy.length
+      ? ccy.map((c, i) => `
+          <div class="ccy-card" style="border-top-color:${COLORS[i % COLORS.length]}">
+            <div class="code" style="color:${COLORS[i % COLORS.length]}">${c.code}</div>
+            <div class="name">${c.name_ru || c.code}</div>
+            <div class="amt">${fmt(c.amount, 2)}</div>
+            <div class="cnt">${c.rate_uzs ? `xarid ${fmt(c.rate_uzs)} · ≈ ${fmt(c.uzs_equivalent)} sўm` : 'xarid yo‘q'}</div>
+            <div class="cnt">${c.branches_with_amount || 0} филиалов</div>
+          </div>
+        `).join('')
+      : `<div class="muted">Валютных остатков нет</div>`;
+
+    // Pie chart uchun: qiymat bo'yicha saralab, haddan tashqari mayda bo'laklarni tartibli ko'rsatamiz.
+    const regions = (data.by_region || [])
+      .filter(r => (r.balance_uzs || 0) > 0)
+      .sort((a, b) => (b.balance_uzs || 0) - (a.balance_uzs || 0));
+    const topN = 12;
+    const top = regions.slice(0, topN);
     const labels = top.map(r => r.region);
     const values = top.map(r => r.balance_uzs || 0);
 
@@ -182,16 +364,46 @@
       type: 'pie',
       data: {
         labels,
-        datasets: [{ data: values, backgroundColor: labels.map((_, i) => COLORS[i % COLORS.length]) }]
+        datasets: [{
+          data: values,
+          backgroundColor: labels.map((_, i) => COLORS[i % COLORS.length]),
+          borderWidth: 2,
+          borderColor: '#ffffff',
+          hoverOffset: 10,
+        }]
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
+        layout: { padding: 10 },
+        rotation: -0.5 * Math.PI, // yuqoridan boshlab chiroyli boshlash
         plugins: {
-          legend: { position: 'right', labels: { boxWidth: 12, font: { size: 10 } } },
+          legend: {
+            position: 'bottom',
+            align: 'center',
+            labels: {
+              usePointStyle: true,
+              pointStyle: 'circle',
+              boxWidth: 10,
+              boxHeight: 10,
+              font: { size: 11, family: 'Inter, sans-serif' },
+              color: '#334155',
+              padding: 8,
+              maxWidth: 220,
+            }
+          },
           tooltip: {
+            backgroundColor: 'rgba(15,23,42,0.92)',
+            titleColor: '#e2e8f0',
+            bodyColor: '#94a3b8',
+            padding: 12,
+            cornerRadius: 10,
             callbacks: {
-              label: (ctx) => ` ${ctx.label}: ${fmt(ctx.raw)} сўм`
+              label: (ctx) => {
+                const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
+                const pct = total ? ((ctx.raw / total) * 100).toFixed(1) : 0;
+                return `  ${ctx.label}: ${fmt(ctx.raw)} сўм (${pct}%)`;
+              }
             }
           }
         }
@@ -220,35 +432,9 @@
       }
     });
 
-    const ccy = (o.currencies || []).filter(c => c.amount != null);
-    new Chart(document.getElementById('chartCcy'), {
-      type: 'bar',
-      data: {
-        labels: ccy.map(c => c.code),
-        datasets: [{
-          label: 'Сумма валюты',
-          data: ccy.map(c => c.amount),
-          backgroundColor: ccy.map((_, i) => COLORS[i % COLORS.length]),
-          borderRadius: 8,
-        }]
-      },
-      options: {
-        indexAxis: 'y',
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: { display: false },
-          tooltip: {
-            callbacks: {
-              afterLabel: (ctx) => {
-                const item = ccy[ctx.dataIndex];
-                return item ? `≈ ${fmt(item.uzs_equivalent)} сўм` : '';
-              }
-            }
-          }
-        }
-      }
-    });
+    const regionCcyCodes = [...new Set(
+      (data.by_region || []).flatMap(r => (r.currencies || []).filter(c => c.amount != null).map(c => c.code))
+    )].slice(0, 5);
 
     document.getElementById('regionTable').innerHTML = `
       <table>
@@ -256,22 +442,25 @@
           <tr>
             <th>Регион</th>
             <th class="num">Фил.</th>
-            <th class="num">Остаток сўм</th>
+            <th class="num">Сўм</th>
             <th class="num">Лимит сўм</th>
             <th class="num">USD</th>
-            <th class="num">%</th>
+            ${regionCcyCodes.filter(c => c !== 'USD').map(c => `<th class="num">${c}</th>`).join('')}
           </tr>
         </thead>
         <tbody>
-          ${(data.by_region || []).map(r => `
+          ${(data.by_region || []).map(r => {
+            const cmap = Object.fromEntries((r.currencies || []).map(c => [c.code, c.amount]));
+            return `
             <tr>
               <td>${r.region || '—'}</td>
               <td class="num">${r.branches}</td>
               <td class="num"><b>${fmt(r.balance_uzs)}</b></td>
               <td class="num">${fmt(r.limit_uzs)}</td>
               <td class="num">${fmt(r.usd_amount, 2)}</td>
-              <td class="num">${r.usage_pct != null ? r.usage_pct + '%' : '—'}</td>
-            </tr>`).join('') || '<tr><td colspan="6" class="muted">Нет данных</td></tr>'}
+              ${regionCcyCodes.filter(c => c !== 'USD').map(c => `<td class="num">${fmt(cmap[c], 2)}</td>`).join('')}
+            </tr>`;
+          }).join('') || '<tr><td colspan="99" class="muted">Нет данных</td></tr>'}
         </tbody>
       </table>`;
 
@@ -284,19 +473,27 @@
             <th>Регион</th>
             <th class="num">Сўм</th>
             <th class="num">USD</th>
+            <th>Другие валюты</th>
             <th class="num">USD мин.</th>
           </tr>
         </thead>
         <tbody>
-          ${(data.branches || []).map(b => `
+          ${(data.branches || []).map(b => {
+            const others = (b.currencies || [])
+              .filter(c => c.code !== 'USD' && c.amount != null)
+              .map(c => `<span class="ccy-chip">${c.code}: ${fmt(c.amount, 2)}</span>`)
+              .join('') || '—';
+            return `
             <tr>
               <td><b>${b.local_code || b.bxm_code || '—'}</b></td>
               <td>${b.branch_name || '—'}</td>
               <td>${b.region || '—'}</td>
               <td class="num"><b>${fmt(b.balance_uzs)}</b></td>
               <td class="num">${fmt(b.usd_amount, 2)}</td>
+              <td>${others}</td>
               <td class="num">${b.usd_below_minimum ? '<span style="color:#b91c1c;font-weight:800">ниже</span>' : (b.usd_amount != null ? '<span style="color:#15803d">норма</span>' : '—')}</td>
-            </tr>`).join('') || '<tr><td colspan="6" class="muted">Нет привязанных остатков — импортируйте Excel</td></tr>'}
+            </tr>`;
+          }).join('') || '<tr><td colspan="7" class="muted">Нет привязанных остатков — импортируйте Excel</td></tr>'}
         </tbody>
       </table>`;
 

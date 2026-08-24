@@ -88,6 +88,11 @@ from core.branch_balance import (
     parse_branch_balances_xlsx,
     replace_branch_balances,
 )
+from core.sqb_rates import (
+    latest_rates,
+    parse_sqb_rates_xlsx,
+    replace_sqb_rates,
+)
 from core.incassation_router import apply_live_states, build_regional_routes
 from core.cashier_analytics import (
     cashier_analytics,
@@ -399,6 +404,41 @@ async def get_all_branch_balances():
 @app.get("/api/branch-balances/analytics", summary="Сводка кассы: всего и по регионам")
 async def get_branch_cash_analytics():
     return branch_cash_analytics()
+
+
+@app.get("/api/sqb-rates", summary="SQB xarid/sotuv kurslari")
+async def get_sqb_rates():
+    return latest_rates()
+
+
+@app.post("/api/sqb-rates/import", summary="SQB kurslarini Exceldan yuklash (xarid/sotuv)")
+async def import_sqb_rates(
+    file: UploadFile = File(..., description="XLSX: sana, Valyuta nomi, Xarid, Sotuv"),
+):
+    if not file.filename or not file.filename.lower().endswith((".xlsx", ".xlsm")):
+        raise HTTPException(400, "Ожидается .xlsx файл")
+    tmp_dir = tempfile.mkdtemp(prefix="sqb_rates_")
+    tmp_path = os.path.join(tmp_dir, file.filename)
+    try:
+        with open(tmp_path, "wb") as f:
+            shutil.copyfileobj(file.file, f)
+        try:
+            parsed = parse_sqb_rates_xlsx(tmp_path)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        stats = replace_sqb_rates(parsed["records"])
+        return {
+            "ok": True,
+            "filename": file.filename,
+            "header_row": parsed["header_row"],
+            "dates": parsed["dates"],
+            "imported": stats["saved"],
+            "validation_errors": parsed["errors"][:50],
+            "validation_errors_count": len(parsed["errors"]),
+            "current": latest_rates(),
+        }
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 @app.post("/api/branches/balances/import", summary="Импорт кассовых остатков филиалов (отдельный XLSX)")
