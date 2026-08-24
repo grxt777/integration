@@ -1134,9 +1134,11 @@ async function loadFromJSON() {
 
     document.getElementById('loader').style.display = 'none';
     startSimulation();
+    await showTripFromQuery();
   } catch (err) {
     console.warn('Ошибка при загрузке:', err);
     document.getElementById('loader').style.display = 'none';
+    await showTripFromQuery();
   }
 }
 
@@ -1587,53 +1589,61 @@ function renderRouteSidebar(carRoutes, totalStops, totalDistKm, totalTimeMin) {
   hydrateIcons();
 }
 
+function moneyMln(v, digits) {
+  const n = Number(v) || 0;
+  const d = digits == null ? (Math.abs(n) >= 1e9 ? 0 : 1) : digits;
+  return (n / 1e6).toFixed(d) + ' млн';
+}
+
+function stopRefill(s) {
+  if (s && s.refill_amount != null && Number(s.refill_amount) > 0) return Number(s.refill_amount);
+  const cap = Number((s && s.capacity) || 400_000_000);
+  const bal = Number((s && s.balance) || 0);
+  return Math.max(0, Math.round(cap * 0.8 - bal));
+}
+
+function validLatLng(p) {
+  if (!p) return null;
+  const lat = Number(p.lat ?? p.latitude);
+  const lon = Number(p.lon ?? p.lng ?? p.longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  if (Math.abs(lat) < 0.01 && Math.abs(lon) < 0.01) return null;
+  if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
+  return L.latLng(lat, lon);
+}
+
 function renderRegionalRoutes(data) {
   routingLayers.forEach(l => map.removeLayer(l));
   routingLayers = [];
+  routeControls.forEach(rc => { try { map.removeControl(rc); } catch (_) {} });
+  routeControls = [];
   if (depotMarker) { map.removeLayer(depotMarker); depotMarker = null; }
 
   const allPts = [];
-  data.cars.forEach((car, gi) => {
+  (data.cars || []).forEach((car, gi) => {
     const color = car.color || CAR_COLORS[gi % CAR_COLORS.length];
     const dep = car.departure_branch || {};
-    const routePts = (car.geometry || []).map(p => L.latLng(p.lat, p.lon));
+    const routePts = (car.geometry || []).map(validLatLng).filter(Boolean);
+    const stopPts = (car.stops || []).map(validLatLng).filter(Boolean);
+    const depPt = validLatLng(dep);
     const wps = [];
-    if (dep.lat != null && dep.lon != null) wps.push(L.latLng(dep.lat, dep.lon));
-    (car.stops || []).forEach(s => wps.push(L.latLng(s.lat, s.lon)));
-    if (dep.lat != null && dep.lon != null) wps.push(L.latLng(dep.lat, dep.lon));
-    allPts.push(...(routePts.length ? routePts : wps));
+    if (depPt) wps.push(depPt);
+    wps.push(...stopPts);
+    if (depPt) wps.push(depPt);
+    const linePts = routePts.length >= 2 ? routePts : wps;
+    allPts.push(...linePts);
 
-    const roadLike = routePts.length > wps.length + 4;
-    if (roadLike) {
-      routingLayers.push(L.polyline(routePts, {
+    if (linePts.length >= 2) {
+      routingLayers.push(L.polyline(linePts, {
         color: '#000', weight: 8, opacity: 0.16, lineJoin: 'round', lineCap: 'round'
       }).addTo(map));
-      routingLayers.push(L.polyline(routePts, {
+      routingLayers.push(L.polyline(linePts, {
         color, weight: 5, opacity: 0.92, lineJoin: 'round', lineCap: 'round'
       }).addTo(map));
-    } else if (wps.length >= 2 && L.Routing) {
-      const ctrl = L.Routing.control({
-        waypoints: wps,
-        router: L.Routing.osrmv1({ serviceUrl: 'https://router.project-osrm.org/route/v1' }),
-        addWaypoints: false,
-        draggableWaypoints: false,
-        fitSelectedRoutes: false,
-        show: false,
-        routeWhileDragging: false,
-        lineOptions: {
-          styles: [
-            { color: '#000', weight: 8, opacity: 0.16 },
-            { color, weight: 5, opacity: 0.92 },
-          ],
-        },
-        createMarker: () => null,
-      }).addTo(map);
-      routeControls.push(ctrl);
-    } else if (wps.length >= 2) {
-      routingLayers.push(L.polyline(wps, { color, weight: 5, opacity: 0.9 }).addTo(map));
     }
-    if (dep.lat != null && dep.lon != null) {
-      const depotPin = L.marker([dep.lat, dep.lon], {
+
+    if (depPt) {
+      const depotPin = L.marker(depPt, {
         icon: L.divIcon({
           className: '',
           html: `<div style="width:34px;height:34px;border-radius:9px;background:${color};border:2.5px solid #fff;display:flex;align-items:center;justify-content:center;box-shadow:0 0 10px ${color}99">${appIcon('building-2')}</div>`,
@@ -1641,11 +1651,14 @@ function renderRegionalRoutes(data) {
         })
       }).addTo(map).bindPopup(`<b>${dep.name || 'Филиал'}</b><br>${car.region || ''}<br>${dep.address || ''}`);
       routingLayers.push(depotPin);
+      allPts.push(depPt);
     }
 
     (car.stops || []).forEach((stop, si) => {
+      const pt = validLatLng(stop);
+      if (!pt) return;
       const stColor = stop.status === 'critical' ? '#ef4444' : stop.status === 'warning' ? '#f59e0b' : '#22c55e';
-      const pin = L.marker([stop.lat, stop.lon], {
+      const pin = L.marker(pt, {
         icon: L.divIcon({
           className: '',
           html: `<div style="width:28px;height:28px;border-radius:50%;background:${color};border:3px solid #fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:#fff;box-shadow:0 2px 6px #0005">${si + 1}</div>`,
@@ -1656,46 +1669,66 @@ function renderRegionalRoutes(data) {
         <div class="popup-row">Вилоят: <span>${car.region || '—'}</span></div>
         <div class="popup-row">Филиал: <span>${dep.name || dep.local_code || '—'}</span></div>
         <div class="popup-row">Адрес: <span>${stop.address || '—'}</span></div>
+        <div class="popup-row">Остаток: <span>${moneyMln(stop.balance)} · ${Number(stop.balance_pct || 0).toFixed(0)}%</span></div>
+        <div class="popup-row">Довезти: <span style="color:#d97706">${moneyMln(stopRefill(stop), 0)}</span></div>
         <div class="popup-row">Статус: <span style="color:${stColor}">${stop.status || '—'}</span></div>
       `);
       routingLayers.push(pin);
+      allPts.push(pt);
     });
   });
 
-  if (allPts.length) map.fitBounds(L.latLngBounds(allPts), { padding: [45, 45] });
+  const loader = document.getElementById('loader');
+  if (loader) loader.style.display = 'none';
+  setTimeout(() => {
+    try { map.invalidateSize(); } catch (_) {}
+    if (allPts.length) {
+      map.fitBounds(L.latLngBounds(allPts), { padding: [60, 60], maxZoom: 14 });
+    }
+  }, 80);
 
-  const warnings = (data.unserved_regions || []).map(x => `${x.region}: ${x.reason}`).join('<br>');
-  document.getElementById('route-info').innerHTML =
-    `<b>${data.cars.length} маршрутов по вилоятам</b><br>` +
-    `Старт/финиш: свой филиал с Инкассация = 1<br>` +
-    `Остановок: ${data.total_stops} · ${data.total_dist_km} км · ~${data.est_time_min} мин` +
-    (data.fallback_unknown_balances ? '<br><span style="color:#d97706">Нет актуальных балансов: предварительный маршрут по ATM без статуса.</span>' : '') +
-    (warnings ? `<br><span style="color:#dc2626">${warnings}</span>` : '');
+  const infoEl = document.getElementById('route-info');
+  if (infoEl) {
+    const warnings = (data.unserved_regions || []).map(x => `${x.region}: ${x.reason}`).join('<br>');
+    infoEl.innerHTML =
+      `<b>${(data.cars || []).length} маршрутов по вилоятам</b><br>` +
+      `Старт/финиш: свой филиал с Инкассация = 1<br>` +
+      `Остановок: ${data.total_stops} · ${data.total_dist_km} км · ~${data.est_time_min} мин` +
+      (warnings ? `<br><span style="color:#dc2626">${warnings}</span>` : '');
+  }
 
   const sb = document.getElementById('route-sidebar');
   if (!sb) return;
   openRouteSidebar();
-  document.getElementById('rs-cars-count').textContent = data.cars.length;
-  document.getElementById('rs-stops-count').textContent = data.total_stops;
-  document.getElementById('rs-distance').textContent = Number(data.total_dist_km || 0).toFixed(1) + ' км';
-  document.getElementById('rs-time').textContent = (data.est_time_min || 0) + ' мин';
+  const carsCount = document.getElementById('rs-cars-count');
+  const stopsCount = document.getElementById('rs-stops-count');
+  const distEl = document.getElementById('rs-distance');
+  const timeEl = document.getElementById('rs-time');
+  if (carsCount) carsCount.textContent = (data.cars || []).length;
+  if (stopsCount) stopsCount.textContent = data.total_stops;
+  if (distEl) distEl.textContent = Number(data.total_dist_km || 0).toFixed(1) + ' км';
+  if (timeEl) timeEl.textContent = (data.est_time_min || 0) + ' мин';
 
   const container = document.getElementById('rs-cars-list');
   if (!container) return;
-  container.innerHTML = data.cars.map(car => {
+  container.innerHTML = (data.cars || []).map(car => {
     const color = car.color;
+    const refillTotal = Number(car.refill_total) || (car.stops || []).reduce((s, x) => s + stopRefill(x), 0);
     const stops = (car.stops || []).map((s, si) => {
       const pct = Number(s.balance_pct || 0).toFixed(0);
-      const balStr = ((s.balance || 0) / 1e6).toFixed(1) + ' млн';
+      const balStr = moneyMln(s.balance);
+      const refillStr = moneyMln(stopRefill(s), 0);
       const balCls = s.status === 'critical' ? 'bal-crit' : s.status === 'warning' ? 'bal-warn' : 'bal-ok';
       return `
         <div class="rs-stop" onclick="typeof selectAtm==='function' && selectAtm('${s.atm_id || s.terminal_id || ''}')" style="cursor:pointer">
           <div class="rs-stop-num" style="background:${color}">${si + 1}</div>
           <div class="rs-stop-name">${s.name || s.terminal_id}<br>
             <span style="color:#667085;font-size:10px">${s.bank || s.address || ''}</span>
+            <span style="display:block;color:#667085;font-size:10px;margin-top:2px">остаток ${balStr} (${pct}%)</span>
           </div>
-          <div class="rs-stop-bal ${balCls}">${balStr}<br>
-            <span style="font-weight:500;color:#667085">${pct}%</span>
+          <div class="rs-stop-bal ${balCls}">
+            +${refillStr}
+            <br><span style="font-weight:600;color:#d97706;font-size:10px">довезти</span>
           </div>
         </div>`;
     }).join('');
@@ -1705,7 +1738,7 @@ function renderRegionalRoutes(data) {
           <div class="rs-car-dot" style="background:${color}"></div>
           <span style="color:${color};font-weight:700">${car.label}</span>
           <span style="margin-left:auto;color:#667085;font-size:11px;font-weight:600">
-            ${car.stops.length} ост. · ${Number(car.total_dist_km || 0).toFixed(1)} км · ${car.est_time_min || 0} мин
+            ${(car.stops || []).length} ост. · ${Number(car.total_dist_km || car.distance_km || 0).toFixed(1)} км · ${car.est_time_min || 0} мин · ${moneyMln(refillTotal, 0)}
           </span>
         </div>
         <div class="rs-stops">${stops}</div>
@@ -1730,6 +1763,75 @@ function clearRoute() {
   routingLayers = [];
   if (depotMarker) { map.removeLayer(depotMarker); depotMarker = null; }
   document.getElementById('route-sidebar').classList.remove('open');
+}
+
+function tripRecordToCar(t) {
+  const dep = t.departure_branch || {};
+  return {
+    region: t.region,
+    label: t.label || t.region,
+    priority: t.priority,
+    color: '#7c3aed',
+    departure_branch: {
+      local_code: t.branch_local_code || dep.local_code,
+      address: t.branch_address || dep.address,
+      name: (t.branch_local_code || dep.local_code)
+        ? `Филиал ${t.branch_local_code || dep.local_code}`
+        : (dep.name || 'Филиал'),
+      lat: t.branch_lat ?? dep.lat,
+      lon: t.branch_lon ?? dep.lon,
+    },
+    stops: t.stops || [],
+    geometry: t.geometry || [],
+    distance_km: t.distance_km || 0,
+    total_dist_km: t.distance_km || t.total_dist_km || 0,
+    est_time_min: t.est_time_min || 0,
+    refill_total: t.refill_total || 0,
+  };
+}
+
+let _shownTripId = null;
+async function showTripFromQuery() {
+  const tripId = new URLSearchParams(location.search).get('trip');
+  if (!tripId || tripId === 'undefined' || tripId === 'null') return false;
+  if (_shownTripId === String(tripId) && routingLayers.length) return true;
+  try {
+    let t = null;
+    const one = await fetch(`${API_BASE}/api/incassation/trips/${encodeURIComponent(tripId)}`);
+    if (one.ok) t = await one.json();
+    if (!t) {
+      const cal = await fetch(`${API_BASE}/api/incassation/calendar`).then((r) => r.json());
+      t = (cal.trips || cal.events || []).find((x) => String(x.id) === String(tripId));
+    }
+    if (!t) {
+      console.warn('Рейс не найден:', tripId);
+      return false;
+    }
+    _shownTripId = String(tripId);
+    const car = tripRecordToCar(t);
+    (car.stops || []).forEach((s) => {
+      s.atm_id = s.atm_id || s.terminal_id;
+    });
+    renderRegionalRoutes({
+      cars: [car],
+      total_stops: (car.stops || []).length,
+      total_dist_km: car.distance_km || 0,
+      est_time_min: car.est_time_min || 0,
+      unserved_regions: [],
+    });
+    const infoEl = document.getElementById('route-info');
+    if (infoEl) {
+      infoEl.innerHTML =
+        `<b>${car.label}</b><br>` +
+        `Дата: ${t.planned_date || '—'} · приоритет: ${t.priority || '—'}<br>` +
+        `Остановок: ${(car.stops || []).length} · ${Number(car.distance_km || 0).toFixed(1)} км · ~${car.est_time_min || 0} мин<br>` +
+        `Довезти: ${moneyMln(car.refill_total || (car.stops || []).reduce((s, x) => s + stopRefill(x), 0), 0)}`;
+    }
+    return true;
+  } catch (err) {
+    console.warn('Не удалось открыть рейс на карте:', err);
+    return false;
+  }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1920,4 +2022,9 @@ function renderWSRoute(routeData) {
 // BOOT — пробуем WebSocket, fallback на JSON-файлы
 // ═══════════════════════════════════════════════════════════
 hydrateIcons();
-connectWebSocket();
+if (new URLSearchParams(location.search).get('trip')) {
+  loadFromJSON();
+} else {
+  connectWebSocket();
+  setTimeout(() => { if (!wsMode) loadFromJSON(); }, 1500);
+}

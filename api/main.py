@@ -93,7 +93,7 @@ from core.sqb_rates import (
     parse_sqb_rates_xlsx,
     replace_sqb_rates,
 )
-from core.incassation_router import apply_live_states, build_regional_routes
+from core.incassation_router import apply_live_states, build_regional_routes, hours_to_low_cash
 from core.cashier_analytics import (
     cashier_analytics,
     cashier_detail,
@@ -650,9 +650,8 @@ async def regional_incassation_route(
         atms, branches, status,
         speed_kmh=speed_kmh, max_stops=max_stops, snap_roads=snap_roads,
     )
-    if req.persist and result.get("cars"):
-        replace_incassation_trips(result["cars"])
-        result["saved_to_calendar"] = len(result["cars"])
+    if req.persist:
+        result["saved_to_calendar"] = replace_incassation_trips(result.get("cars") or [])
     else:
         result["saved_to_calendar"] = 0
     return result
@@ -672,48 +671,55 @@ async def incassation_calendar():
             "address": t.get("label") or t.get("branch_address"),
             "terminal_id": t.get("branch_local_code"),
             "priority": t.get("priority") or "planned",
-            "hours_to_low_cash": t.get("est_time_min"),
             "recommended_refill": t.get("refill_total") or 0,
             "stops": t.get("stops") or [],
+            "stop_count": len(t.get("stops") or []),
             "distance_km": t.get("distance_km"),
             "est_time_min": t.get("est_time_min"),
             "label": t.get("label"),
+            "branch_address": t.get("branch_address"),
+            "branch_lat": t.get("branch_lat"),
+            "branch_lon": t.get("branch_lon"),
+            "geometry": t.get("geometry") or [],
             "type": "route",
         })
     return {"events": events, "count": len(events), "trips": trips}
 
 
+@app.get("/api/incassation/trips/{trip_id}", summary="Один сохранённый рейс для карты")
+async def incassation_trip(trip_id: int):
+    for t in list_incassation_trips():
+        if int(t.get("id") or 0) == int(trip_id):
+            return t
+    raise HTTPException(404, f"Рейс {trip_id} не найден")
+
+
 @app.get("/api/incassation/plan", summary="Прогнозный план инкассации")
 async def incassation_plan(days: int = Query(2, ge=1, le=14)):
     atms = list_atms(limit=5000)
-    # Консервативный операционный прогноз: burn-rate выводится из текущего уровня
-    # заполнения; заменяется ML-прогнозом при подключённой истории транзакций.
     now = datetime.now(timezone.utc)
     planned = []
     for a in atms:
-        cap, bal = a.get("capacity") or 400_000_000, a.get("balance")
-        if bal is None or not cap:
+        hours = hours_to_low_cash(a)
+        if hours is None or hours > days * 24:
             continue
-        pct = bal / cap
-        burn_per_day = max(cap * 0.035, (1 - pct) * cap * 0.18)
-        hours = max(0, (bal - cap * 0.20) / burn_per_day * 24)
-        if hours <= days * 24:
-            planned.append({
-                "terminal_id": a["terminal_id"],
-                "address": a.get("address"),
-                "region": a.get("region"),
-                "due_at": (now + timedelta(hours=hours)).isoformat(),
-                "hours_to_low_cash": round(hours, 1),
-                "priority": "critical" if hours < 12 else "high" if hours < 24 else "planned",
-                "recommended_refill": round(max(0, cap * 0.8 - bal)),
-            })
+        cap, bal = a.get("capacity") or 400_000_000, a.get("balance")
+        planned.append({
+            "terminal_id": a["terminal_id"],
+            "address": a.get("address"),
+            "region": a.get("region"),
+            "due_at": (now + timedelta(hours=hours)).isoformat(),
+            "hours_to_low_cash": hours,
+            "priority": "critical" if hours < 12 else "high" if hours < 24 else "planned",
+            "recommended_refill": round(max(0, cap * 0.8 - (bal or 0))),
+        })
     planned.sort(key=lambda x: x["hours_to_low_cash"])
     return {
         "generated_at": now.isoformat(),
         "horizon_days": days,
         "planned_atms": planned,
         "count": len(planned),
-        "note": "Прогнозный план; при подключённой истории транзакций burn-rate заменяется ML-прогнозом.",
+        "note": "Оценка по текущему остатку (без истории транзакций). Календарь рейсов — POST /api/routes/incassation.",
     }
 
 

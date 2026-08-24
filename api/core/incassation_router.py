@@ -345,8 +345,22 @@ def _item_region(item: Dict[str, Any]) -> Optional[str]:
     )
 
 
+def hours_to_low_cash(atm: Dict[str, Any]) -> Optional[float]:
+    """Conservative burn-rate from current fill. No transaction history / ML."""
+    cap = atm.get("capacity") or DEFAULT_CAPACITY
+    bal = atm.get("balance")
+    if bal is None or not cap:
+        return None
+    pct = bal / cap
+    burn_per_day = max(cap * 0.035, (1 - pct) * cap * 0.18)
+    if burn_per_day <= 0:
+        return None
+    hours = (bal - cap * LOW_CASH_PCT) / burn_per_day * 24
+    return round(max(0.0, hours), 1)
+
+
 def _stop_payload(atm: Dict[str, Any]) -> Dict[str, Any]:
-    cap = atm.get("capacity") or 400_000_000
+    cap = atm.get("capacity") or DEFAULT_CAPACITY
     bal = atm.get("balance")
     refill = 0
     if bal is None:
@@ -365,6 +379,7 @@ def _stop_payload(atm: Dict[str, Any]) -> Dict[str, Any]:
         "balance": bal if bal is not None else 0,
         "balance_pct": atm.get("balance_pct") or 0,
         "refill_amount": refill,
+        "hours_to_low_cash": hours_to_low_cash(atm),
     }
 
 

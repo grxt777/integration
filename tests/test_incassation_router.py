@@ -1,6 +1,7 @@
 from api.core.incassation_router import (
     build_regional_routes,
     canonical_region,
+    hours_to_low_cash,
     km,
     nearest_neighbor,
     optimize_tour,
@@ -117,3 +118,12 @@ def test_warning_skips_ok_and_unknown():
     served = {s["terminal_id"] for c in result["cars"] for s in c["stops"]}
     assert served == {"W1", "C1"}
     assert result["diagnostics"]["target_atms"] == 2
+
+
+def test_hours_to_low_cash_none_without_balance():
+    assert hours_to_low_cash({"capacity": 400_000_000}) is None
+
+
+def test_hours_to_low_cash_critical_is_zero():
+    hours = hours_to_low_cash({"capacity": 400_000_000, "balance": 40_000_000})
+    assert hours == 0.0
