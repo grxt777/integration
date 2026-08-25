@@ -23,8 +23,18 @@ let currentSearchQuery = "";
 let selectedRegionFromModal = null;
 let selectedAtmIdsFromModal = null; // Set of IDs (null if no modal filter is active)
 
-function hydrateIcons() {
-  if (window.lucide) lucide.createIcons();
+function hydrateIcons(root) {
+  if (!window.lucide || typeof lucide.createIcons !== 'function') return;
+  try {
+    const opts = {
+      attrs: { 'stroke-width': '2.4' },
+      nameAttr: 'data-lucide',
+    };
+    if (root) opts.root = root;
+    lucide.createIcons(opts);
+  } catch (err) {
+    console.warn('lucide.createIcons failed:', err);
+  }
 }
 
 function appIcon(name, extra = '') {
@@ -74,17 +84,16 @@ function updateMarkersHighlight(filtered) {
     
     if (isFiltering) {
       if (isMatched) {
-        marker.setIcon(makeIcon(st.status, true));
+        setAtmMarkerIcon(marker, st.status, true);
         marker.setOpacity(1.0);
         if (!map.hasLayer(marker)) marker.addTo(map);
       } else {
-        marker.setIcon(makeIcon(st.status, false));
+        setAtmMarkerIcon(marker, st.status, false);
         marker.setOpacity(0.25);
         if (!map.hasLayer(marker)) marker.addTo(map);
       }
     } else {
-      // Normal state (no filter)
-      marker.setIcon(makeIcon(st.status, false));
+      setAtmMarkerIcon(marker, st.status, false);
       marker.setOpacity(1.0);
       if (!map.hasLayer(marker)) marker.addTo(map);
     }
@@ -303,10 +312,10 @@ async function addRegionalBoundaries() {
         const name = feature.properties.ADM1_RU || feature.properties.ADM1_EN || 'Область';
         const color = getDistrictColor(name);
         return {
-          color: '#475569', // спокойный серый цвет для границ областей
-          weight: 2.2,
-          fillColor: color,
-          fillOpacity: 0.03,
+          color: '#94a3b8',
+          weight: 1.4,
+          fillColor: '#fff',
+          fillOpacity: 0,
         };
       },
       onEachFeature: function(feature, layer) {
@@ -324,15 +333,17 @@ async function addRegionalBoundaries() {
           mouseover: function(e) {
             const l = e.target;
             l.setStyle({
-              fillOpacity: 0.12,
-              weight: 3
+              fillColor: '#64748b',
+              fillOpacity: 0.08,
+              weight: 2.2,
             });
           },
           mouseout: function(e) {
             const l = e.target;
             l.setStyle({
-              fillOpacity: 0.03,
-              weight: 2.2
+              fillColor: '#fff',
+              fillOpacity: 0,
+              weight: 1.4,
             });
           }
         });
@@ -388,10 +399,12 @@ initMapLayers();
 function makeIcon(status, isHighlighted = false) {
   const colors = { ok:'#22c55e', warning:'#f59e0b', critical:'#ef4444' };
   const c = colors[status] || '#94a3b8';
-  
+  // Inline SVG — no Lucide hydrate (simulation setIcon every tick caused flicker)
+  const glyph = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" x2="22" y1="10" y2="10"/></svg>`;
+
   if (isHighlighted) {
     return L.divIcon({
-      className: '',
+      className: 'atm-marker-icon',
       html: `<div class="marker-highlighted" style="
         width:34px;height:34px;border-radius:50%;
         background:${c};border:3.5px solid #facc15;
@@ -399,43 +412,60 @@ function makeIcon(status, isHighlighted = false) {
         display:flex;align-items:center;justify-content:center;
         color:#fff;
         animation: marker-pulse 1.2s infinite alternate;
-      ">${appIcon('credit-card')}</div>`,
+      ">${glyph}</div>`,
       iconSize: [34,34], iconAnchor: [17,17],
     });
   }
-  
+
   return L.divIcon({
-    className: '',
+    className: 'atm-marker-icon',
     html: `<div style="
       width:28px;height:28px;border-radius:50%;
       background:${c};border:3px solid #fff;
       box-shadow:0 0 12px ${c}99;
       display:flex;align-items:center;justify-content:center;
       color:#fff;
-    ">${appIcon('credit-card')}</div>`,
+    ">${glyph}</div>`,
     iconSize: [28,28], iconAnchor: [14,14],
   });
 }
 
+function setAtmMarkerIcon(marker, status, isHighlighted = false) {
+  if (!marker) return;
+  const key = `${status}|${isHighlighted ? 1 : 0}`;
+  if (marker._atmIconKey === key) return;
+  marker._atmIconKey = key;
+  marker.setIcon(makeIcon(status, isHighlighted));
+}
+
 let atmsVisible = true;
 
-function initMarkers() {
+function clearAtmMarkers() {
+  Object.values(markers).forEach((marker) => {
+    try { map.removeLayer(marker); } catch (_) {}
+  });
+  markers = {};
+}
+
+function initMarkers(fit = true) {
+  clearAtmMarkers();
   const points = [];
   ATM_META.forEach(atm => {
     const lat = parseFloat(atm.lat);
     const lon = parseFloat(atm.lon);
     if (!isNaN(lat) && !isNaN(lon) && lat !== 0 && lon !== 0) {
-      const m = L.marker([lat, lon], { icon: makeIcon('ok') })
+      const st = atmState[atm.id]?.status || 'ok';
+      const m = L.marker([lat, lon], { icon: makeIcon(st) })
         .on('click', () => selectAtm(atm.id));
+      m._atmIconKey = `${st}|0`;
       if (atmsVisible) m.addTo(map);
       markers[atm.id] = m;
       points.push([lat, lon]);
     }
   });
   console.log(`Placed ${points.length} markers on the map out of ${ATM_META.length} ATMs`);
-  if (points.length > 0) {
-    const bounds = L.latLngBounds(points);
-    map.fitBounds(bounds, { padding: [50, 50] });
+  if (fit && points.length > 0) {
+    map.fitBounds(L.latLngBounds(points), { padding: [50, 50] });
   }
   syncAtmsToggleBtn();
 }
@@ -456,7 +486,7 @@ function syncAtmsToggleBtn() {
 
 function toggleAtmsLayer() {
   atmsVisible = !atmsVisible;
-  Object.values(markers).forEach(marker => {
+  Object.values(markers).forEach((marker) => {
     if (atmsVisible) {
       if (!map.hasLayer(marker)) marker.addTo(map);
     } else if (map.hasLayer(marker)) {
@@ -630,15 +660,16 @@ function openBranchCashPanel(branch) {
 
 function makeBranchIcon(incassation) {
   const c = incassation ? '#7c3aed' : '#64748b';
+  const glyph = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z"/><path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"/><path d="M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2"/><path d="M10 6h4"/><path d="M10 10h4"/><path d="M10 14h4"/><path d="M10 18h4"/></svg>`;
   return L.divIcon({
-    className: '',
+    className: 'branch-marker-icon',
     html: `<div style="
       width:26px;height:26px;border-radius:7px;
       background:${c};border:2.5px solid #fff;
       box-shadow:0 0 10px ${c}99;
       display:flex;align-items:center;justify-content:center;
       color:#fff;
-    ">${appIcon('building-2')}</div>`,
+    ">${glyph}</div>`,
     iconSize: [26, 26], iconAnchor: [13, 13],
   });
 }
@@ -866,34 +897,47 @@ async function showBaselinePanel() {
   }
 }
 
-function connectWebSocket() {
-  const loaderP = document.querySelector('#loader p');
-  if (loaderP) loaderP.textContent = 'Подключение к API...';
+function hideLoader() {
+  const loader = document.getElementById('loader');
+  if (!loader) return;
+  loader.style.display = 'none';
+  loader.classList.add('is-hidden');
+  loader.setAttribute('hidden', '');
+  loader.style.pointerEvents = 'none';
+}
 
-  ws = new WebSocket(WS_URL);
+function connectWebSocket() {
+  // Live WS endpoint is optional; never block the map UI on it.
+  try {
+    ws = new WebSocket(WS_URL);
+  } catch (err) {
+    console.warn('WebSocket недоступен:', err);
+    return;
+  }
 
   ws.onopen = () => {
     console.log('WebSocket connected');
-    wsMode = true;
   };
 
   ws.onmessage = (event) => {
-    const msg = JSON.parse(event.data);
-    handleServerMessage(msg);
+    try {
+      const msg = JSON.parse(event.data);
+      wsMode = true;
+      handleServerMessage(msg);
+    } catch (err) {
+      console.warn('WebSocket message error:', err);
+    }
   };
 
   ws.onerror = () => {
-    console.warn('WebSocket недоступен — fallback на JSON-файлы');
+    console.warn('WebSocket недоступен — используем данные из БД');
     ws = null;
     wsMode = false;
-    loadFromJSON();
   };
 
   ws.onclose = () => {
-    if (wsMode) {
-      console.warn('WebSocket закрыт, переподключение через 3с...');
-      setTimeout(connectWebSocket, 3000);
-    }
+    wsMode = false;
+    ws = null;
   };
 }
 
@@ -961,7 +1005,7 @@ function handleServerMessage(msg) {
 
         if (markers[id]) {
           const isHighlighted = selectedAtmIdsFromModal && selectedAtmIdsFromModal.has(id);
-          markers[id].setIcon(makeIcon(status, isHighlighted));
+          setAtmMarkerIcon(markers[id], status, isHighlighted);
         }
       });
 
@@ -1049,16 +1093,29 @@ async function loadAtmsFromDb() {
     if (!res.ok) throw new Error('Failed to fetch ATMs from DB');
     const data = await res.json();
     if (data && data.atms) {
-      ATM_META = data.atms.map(a => ({
-        id:       a.terminal_id,
-        name:     a.atm_number || a.terminal_id,
-        bank:     a.branch || 'SQB',
-        address:  a.address || 'Адрес не указан',
-        lat:      a.lat,
-        lon:      a.lon,
-        capacity: a.capacity || 400000000,
-        region:   a.region, // сохранить регион
-      }));
+      ATM_META = data.atms.map(a => {
+        const capacity = a.capacity || 400000000;
+        const balance = a.balance != null ? Number(a.balance) : null;
+        const pct = (balance != null && capacity) ? balance / capacity : null;
+        let status = a.status || 'unknown';
+        if (pct != null) {
+          if (pct < 0.2) status = 'critical';
+          else if (pct < 0.4) status = 'warning';
+          else status = 'ok';
+        }
+        return {
+          id:       a.terminal_id,
+          name:     a.atm_number || a.terminal_id,
+          bank:     a.branch || 'SQB',
+          address:  a.address || 'Адрес не указан',
+          lat:      a.lat,
+          lon:      a.lon,
+          capacity,
+          balance,
+          status,
+          region:   a.region,
+        };
+      });
       console.log(`Loaded ${ATM_META.length} ATMs from SQLite DB`);
       return true;
     }
@@ -1068,16 +1125,58 @@ async function loadAtmsFromDb() {
   return false;
 }
 
+function hashStr(s) {
+  let h = 0;
+  const t = String(s || '');
+  for (let i = 0; i < t.length; i++) h = ((h << 5) - h) + t.charCodeAt(i);
+  return Math.abs(h);
+}
+
+function seedAtmSeries(atm, steps, stepMs, startMs) {
+  const cap = atm.capacity || 400000000;
+  const seed = hashStr(atm.id);
+  let bal = atm.balance != null ? Number(atm.balance) : cap * (0.22 + (seed % 55) / 100);
+  const rows = [];
+  for (let i = 0; i < steps; i++) {
+    const burn = cap * (0.008 + (seed % 9) / 900);
+    bal = Math.max(0, bal - burn * (0.6 + ((seed + i) % 5) / 10));
+    let is_inc = 0;
+    if (bal < cap * 0.20) {
+      bal = cap * (0.72 + (seed % 18) / 100);
+      is_inc = 1;
+    }
+    rows.push({
+      transactionTime: new Date(startMs + i * stepMs).toISOString(),
+      totalBalance: bal,
+      atm_capacity: cap,
+      is_incassation: is_inc,
+      low_cash_alert: bal < cap * 0.20 ? 1 : 0,
+    });
+  }
+  return rows;
+}
+
+function buildDemoTimeseries() {
+  const steps = 24;
+  const stepMs = 2 * 3600_000;
+  const startMs = Date.now() - steps * stepMs;
+  timeSteps = Array.from({ length: steps }, (_, i) => new Date(startMs + i * stepMs).toISOString());
+  timeIndex = 0;
+  allData = {};
+  ATM_META.forEach((atm) => {
+    allData[atm.id] = seedAtmSeries(atm, steps, stepMs, startMs);
+  });
+}
+
 // Fallback — JSON-файлы если API недоступен
 async function loadFromJSON() {
   const loaderP = document.querySelector('#loader p');
   try {
     if (loaderP) loaderP.textContent = 'Загрузка банкоматов из БД...';
-    
-    // Сначала пробуем загрузить реальные банкоматы из базы
+
     const dbSuccess = await loadAtmsFromDb();
-    
-    // Optional local JSON (only if present — avoid console 404 noise)
+
+    // Optional local JSON only if DB empty
     let tsData = {};
     if (!dbSuccess) {
       if (loaderP) loaderP.textContent = 'Загрузка истории транзакций...';
@@ -1091,53 +1190,30 @@ async function loadFromJSON() {
       } catch (_) {}
     }
 
-    // Определяем временные шаги симуляции
     const times = new Set();
     Object.keys(tsData).forEach(id => {
-      tsData[id].forEach(r => times.add(r.transactionTime));
+      (tsData[id] || []).forEach(r => times.add(r.transactionTime));
     });
 
-    if (times.size > 0) {
-      timeSteps = [...times].sort();
-      allData = tsData;
-    } else {
-      // Нет timeseries — симуляция 30 дней с шагом 2 часа
-      const start = new Date('2024-10-01');
-      for (let i = 0; i < 24 * 30; i++) {
-        times.add(new Date(start.getTime() + i * 2 * 3600_000).toISOString());
+    if (dbSuccess || times.size > 0) {
+      if (times.size > 0) {
+        timeSteps = [...times].sort();
+        allData = tsData;
+      } else {
+        buildDemoTimeseries();
       }
-      timeSteps = [...times];
+      hideLoader();
+      startSimulation();
+    } else {
+      buildDemoTimeseries();
+      hideLoader();
+      startSimulation();
     }
 
-    // Для каждого банкомата без истории — синтетические балансы
-    ATM_META.forEach(atm => {
-      if (!allData[atm.id] || allData[atm.id].length === 0) {
-        let bal = atm.capacity * (0.3 + Math.random() * 0.6);
-        allData[atm.id] = timeSteps.map(t => {
-          const outcome = Math.floor(Math.random() * atm.capacity * 0.04);
-          bal = Math.max(0, bal - outcome);
-          let is_inc = 0;
-          if (bal < atm.capacity * 0.20) {
-            bal = atm.capacity * (0.8 + Math.random() * 0.15);
-            is_inc = 1;
-          }
-          return {
-            transactionTime: t,
-            totalBalance: bal,
-            atm_capacity: atm.capacity,
-            is_incassation: is_inc,
-            low_cash_alert: bal < atm.capacity * 0.20 ? 1 : 0
-          };
-        });
-      }
-    });
-
-    document.getElementById('loader').style.display = 'none';
-    startSimulation();
     await showTripFromQuery();
   } catch (err) {
     console.warn('Ошибка при загрузке:', err);
-    document.getElementById('loader').style.display = 'none';
+    hideLoader();
     await showTripFromQuery();
   }
 }
@@ -1207,33 +1283,42 @@ function tick() {
     // обновляем маркер
     if (markers[atm.id]) {
       const isHighlighted = selectedAtmIdsFromModal && selectedAtmIdsFromModal.has(atm.id);
-      markers[atm.id].setIcon(makeIcon(status, isHighlighted));
+      setAtmMarkerIcon(markers[atm.id], status, isHighlighted);
     }
   });
 
-  document.getElementById('s-total').textContent    = ATM_META.length;
-  document.getElementById('s-critical').textContent = nCrit;
-  document.getElementById('s-warning').textContent  = nWarn;
-  document.getElementById('s-ok').textContent       = nOk;
-  document.getElementById('s-inc').textContent      = nInc;
-
-  // ML риски
-  const mlVals = Object.values(mlPredictions);
-  if (mlVals.length > 0) {
-    document.getElementById('s-ml-high').textContent = mlVals.filter(m => m.risk_label === 'HIGH').length;
-    document.getElementById('s-ml-med').textContent  = mlVals.filter(m => m.risk_label === 'MEDIUM').length;
-  }
-
-  renderList();
-
+  renderKpisAndMarkers(nCrit, nWarn, nOk, nInc);
+  if (timeIndex % 3 === 0) renderList();
   timeIndex++;
 }
 
-function startSimulation() {
-  initMarkers();
+function renderKpisAndMarkers(nCrit, nWarn, nOk, nInc) {
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  set('s-total', ATM_META.length);
+  set('s-critical', nCrit);
+  set('s-warning', nWarn);
+  set('s-ok', nOk);
+  set('s-inc', nInc);
+  const mlVals = Object.values(mlPredictions);
+  if (mlVals.length > 0) {
+    set('s-ml-high', mlVals.filter(m => m.risk_label === 'HIGH').length);
+    set('s-ml-med', mlVals.filter(m => m.risk_label === 'MEDIUM').length);
+  }
+}
+
+function startLiveMap() {
+  if (simTimer) { clearInterval(simTimer); simTimer = null; }
+  initMarkers(true);
   renderList();
+  hydrateIcons();
+}
+
+function startSimulation() {
+  if (simTimer) clearInterval(simTimer);
+  initMarkers(true);
   tick();
-  simTimer = setInterval(tick, 1200);
+  renderList();
+  simTimer = setInterval(tick, 1500);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1432,6 +1517,7 @@ const CAR_LABELS  = ['Машина A', 'Машина B', 'Машина C', 'Ма
 let routeControls = [];   // Leaflet Routing Machine контролы (локальный режим)
 let routingLayers = [];   // обычные полилинии (WebSocket-режим)
 let depotMarker   = null;
+let _routeDrawGen = 0;
 
 async function buildRegionalRoute(status) {
   clearRoute();
@@ -1612,7 +1698,90 @@ function validLatLng(p) {
   return L.latLng(lat, lon);
 }
 
+function isRoadGeometry(pts, waypoints) {
+  return pts.length >= Math.max(8, (waypoints.length || 2) * 4);
+}
+
+function drawRoadLine(pts, color) {
+  if (!pts || pts.length < 2) return;
+  routingLayers.push(L.polyline(pts, {
+    color: '#000', weight: 8, opacity: 0.18, lineJoin: 'round', lineCap: 'round'
+  }).addTo(map));
+  routingLayers.push(L.polyline(pts, {
+    color, weight: 5, opacity: 0.95, lineJoin: 'round', lineCap: 'round'
+  }).addTo(map));
+}
+
+async function fetchOsrmOnce(wps) {
+  const coords = wps.map((p) => `${p.lng.toFixed(6)},${p.lat.toFixed(6)}`).join(';');
+  const publicUrl = `https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson&steps=false`;
+  try {
+    const res = await fetch(publicUrl);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.code === 'Ok' && data.routes && data.routes[0]) {
+        return (data.routes[0].geometry.coordinates || []).map(([lon, lat]) => L.latLng(lat, lon));
+      }
+    }
+  } catch (err) {
+    console.warn('Public OSRM failed:', err);
+  }
+  const points = wps.map((p) => ({ lat: p.lat, lon: p.lng }));
+  const res = await fetch(`${API_BASE}/api/osrm/route`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ points }),
+  });
+  if (!res.ok) throw new Error('OSRM HTTP ' + res.status);
+  const data = await res.json();
+  const g = (data.geometry || []).map(validLatLng).filter(Boolean);
+  if (g.length < 2) throw new Error('OSRM empty geometry');
+  return g;
+}
+
+async function fetchOsrmRoadLine(wps) {
+  if (!wps || wps.length < 2) return [];
+  const CHUNK = 20;
+  if (wps.length <= CHUNK) return fetchOsrmOnce(wps);
+  const out = [];
+  for (let i = 0; i < wps.length - 1; i += CHUNK - 1) {
+    const chunk = wps.slice(i, Math.min(i + CHUNK, wps.length));
+    if (chunk.length < 2) break;
+    const part = await fetchOsrmOnce(chunk);
+    if (!part.length) continue;
+    if (out.length) out.push(...part.slice(1));
+    else out.push(...part);
+  }
+  return out;
+}
+
+async function snapAndDrawCar(car, color, gen) {
+  const dep = car.departure_branch || {};
+  const saved = (car.geometry || []).map(validLatLng).filter(Boolean);
+  const stopPts = (car.stops || []).map(validLatLng).filter(Boolean);
+  const depPt = validLatLng(dep);
+  const wps = [];
+  if (depPt) wps.push(depPt);
+  wps.push(...stopPts);
+  if (depPt) wps.push(depPt);
+
+  let linePts = saved;
+  if (!isRoadGeometry(saved, wps) && wps.length >= 2) {
+    try {
+      linePts = await fetchOsrmRoadLine(wps);
+    } catch (err) {
+      console.warn('OSRM road snap failed, using waypoints:', err);
+      linePts = [];
+    }
+  }
+  if (gen != null && gen !== _routeDrawGen) return [];
+  if (linePts.length < 2) linePts = wps;
+  drawRoadLine(linePts, color);
+  return linePts;
+}
+
 function renderRegionalRoutes(data) {
+  const gen = ++_routeDrawGen;
   routingLayers.forEach(l => map.removeLayer(l));
   routingLayers = [];
   routeControls.forEach(rc => { try { map.removeControl(rc); } catch (_) {} });
@@ -1620,27 +1789,11 @@ function renderRegionalRoutes(data) {
   if (depotMarker) { map.removeLayer(depotMarker); depotMarker = null; }
 
   const allPts = [];
-  (data.cars || []).forEach((car, gi) => {
+  const cars = data.cars || [];
+  cars.forEach((car, gi) => {
     const color = car.color || CAR_COLORS[gi % CAR_COLORS.length];
     const dep = car.departure_branch || {};
-    const routePts = (car.geometry || []).map(validLatLng).filter(Boolean);
-    const stopPts = (car.stops || []).map(validLatLng).filter(Boolean);
     const depPt = validLatLng(dep);
-    const wps = [];
-    if (depPt) wps.push(depPt);
-    wps.push(...stopPts);
-    if (depPt) wps.push(depPt);
-    const linePts = routePts.length >= 2 ? routePts : wps;
-    allPts.push(...linePts);
-
-    if (linePts.length >= 2) {
-      routingLayers.push(L.polyline(linePts, {
-        color: '#000', weight: 8, opacity: 0.16, lineJoin: 'round', lineCap: 'round'
-      }).addTo(map));
-      routingLayers.push(L.polyline(linePts, {
-        color, weight: 5, opacity: 0.92, lineJoin: 'round', lineCap: 'round'
-      }).addTo(map));
-    }
 
     if (depPt) {
       const depotPin = L.marker(depPt, {
@@ -1678,21 +1831,37 @@ function renderRegionalRoutes(data) {
     });
   });
 
-  const loader = document.getElementById('loader');
-  if (loader) loader.style.display = 'none';
-  setTimeout(() => {
+  const fit = () => {
+    if (gen !== _routeDrawGen) return;
     try { map.invalidateSize(); } catch (_) {}
     if (allPts.length) {
       map.fitBounds(L.latLngBounds(allPts), { padding: [60, 60], maxZoom: 14 });
     }
-  }, 80);
+  };
+  hideLoader();
+  setTimeout(fit, 80);
+
+  (async () => {
+    let i = 0;
+    const workers = Array.from({ length: Math.min(3, cars.length) }, async () => {
+      while (i < cars.length) {
+        const idx = i++;
+        const car = cars[idx];
+        const color = car.color || CAR_COLORS[idx % CAR_COLORS.length];
+        const pts = await snapAndDrawCar(car, color, gen);
+        allPts.push(...pts);
+      }
+    });
+    await Promise.all(workers);
+    fit();
+  })();
 
   const infoEl = document.getElementById('route-info');
   if (infoEl) {
     const warnings = (data.unserved_regions || []).map(x => `${x.region}: ${x.reason}`).join('<br>');
     infoEl.innerHTML =
       `<b>${(data.cars || []).length} маршрутов по вилоятам</b><br>` +
-      `Старт/финиш: свой филиал с Инкассация = 1<br>` +
+      `По дорогам (OSRM) · старт/финиш: филиал «Инкассация = 1»<br>` +
       `Остановок: ${data.total_stops} · ${data.total_dist_km} км · ~${data.est_time_min} мин` +
       (warnings ? `<br><span style="color:#dc2626">${warnings}</span>` : '');
   }
@@ -1757,6 +1926,7 @@ function openRouteSidebar() {
 }
 
 function clearRoute() {
+  _routeDrawGen++;
   routeControls.forEach(rc => map.removeControl(rc));
   routeControls = [];
   routingLayers.forEach(l => map.removeLayer(l));
@@ -1855,6 +2025,7 @@ function getRiskIcon(label) {
 // Рендер маршрута полученного по WebSocket (данные от FastAPI)
 function renderWSRoute(routeData) {
   if (!routeData || !routeData.cars) return;
+  if (_shownTripId) return;
 
   // Очищаем старые слои
   routingLayers.forEach(l => map.removeLayer(l));
@@ -1876,44 +2047,24 @@ function renderWSRoute(routeData) {
   }).addTo(map).bindPopup(`<b>Депо инкассаторов</b><br>${DEPOT.name}`);
   routingLayers.push(depotMarker);
 
-  // Рисуем маршруты
+  // Рисуем маршруты по дорогам (OSRM), не прямой линией
   const allPts = [];
+  const gen = ++_routeDrawGen;
   routeData.cars.forEach((car, gi) => {
+    if (!car.departure_branch) {
+      car.departure_branch = { lat: DEPOT.lat, lon: DEPOT.lon, name: DEPOT.name };
+    }
+    snapAndDrawCar(car, car.color || CAR_COLORS[gi % CAR_COLORS.length], gen).then((pts) => {
+      allPts.push(...pts);
+      if (allPts.length > 0) map.fitBounds(L.latLngBounds(allPts), { padding: [40, 40] });
+    });
+
     const fallbackPts = [
       L.latLng(DEPOT.lat, DEPOT.lon),
       ...car.stops.map(s => L.latLng(s.lat, s.lon)),
       L.latLng(DEPOT.lat, DEPOT.lon),
     ];
-    const routePts = (car.geometry && car.geometry.length > 1)
-      ? car.geometry.map(p => L.latLng(p.lat, p.lon))
-      : fallbackPts;
-    allPts.push(...routePts, ...fallbackPts);
-
-    // Тень линии (чуть толще, тёмная) для глубины
-    const shadow = L.polyline(routePts, {
-      color: '#000', weight: 8, opacity: 0.18, lineJoin: 'round', lineCap: 'round'
-    }).addTo(map);
-    routingLayers.push(shadow);
-
-    // Основная линия
-    const poly = L.polyline(routePts, {
-      color: car.color,
-      weight: 5,
-      opacity: 0.92,
-      lineJoin: 'round',
-      lineCap: 'round',
-    }).addTo(map);
-    routingLayers.push(poly);
-
-    // Пунктирная обводка поверх — эффект "движения"
-    const dash = L.polyline(routePts, {
-      color: '#ffffff',
-      weight: 1.5,
-      opacity: 0.35,
-      dashArray: '6 10',
-      lineJoin: 'round',
-    }).addTo(map);
-    routingLayers.push(dash);
+    allPts.push(...fallbackPts);
 
     // Маркеры остановок
     car.stops.forEach((stop, si) => {
@@ -2019,12 +2170,31 @@ function renderWSRoute(routeData) {
 }
 
 // ═══════════════════════════════════════════════════════════
-// BOOT — пробуем WebSocket, fallback на JSON-файлы
+// BOOT — сначала БД/карта, WebSocket только опционально
 // ═══════════════════════════════════════════════════════════
 hydrateIcons();
-if (new URLSearchParams(location.search).get('trip')) {
-  loadFromJSON();
-} else {
-  connectWebSocket();
-  setTimeout(() => { if (!wsMode) loadFromJSON(); }, 1500);
-}
+loadFromJSON().finally(() => {
+  hideLoader();
+  try { connectWebSocket(); } catch (_) {}
+});
+setTimeout(hideLoader, 8000);
+
+// onclick="..." handlers — explicit globals
+window.toggleAtmsLayer = toggleAtmsLayer;
+window.toggleBranchesLayer = toggleBranchesLayer;
+window.toggleWarehouseOnly = toggleWarehouseOnly;
+window.openRegionModal = openRegionModal;
+window.closeRegionModal = closeRegionModal;
+window.performRegionSearch = performRegionSearch;
+window.clearRegionFilter = clearRegionFilter;
+window.onRegionChange = onRegionChange;
+window.updateModalAtmCount = updateModalAtmCount;
+window.onLeftSearchInput = onLeftSearchInput;
+window.buildRoute = buildRoute;
+window.buildRegionalRoute = buildRegionalRoute;
+window.clearRoute = clearRoute;
+window.closeSidebar = closeSidebar;
+window.closeBranchCashPanel = closeBranchCashPanel;
+window.openBranchCashPanelByCode = openBranchCashPanelByCode;
+window.showBaselinePanel = showBaselinePanel;
+window.selectAtm = selectAtm;

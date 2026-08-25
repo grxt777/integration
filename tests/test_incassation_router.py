@@ -5,6 +5,7 @@ from api.core.incassation_router import (
     km,
     nearest_neighbor,
     optimize_tour,
+    osrm_route_geometry,
 )
 
 
@@ -127,3 +128,9 @@ def test_hours_to_low_cash_none_without_balance():
 def test_hours_to_low_cash_critical_is_zero():
     hours = hours_to_low_cash({"capacity": 400_000_000, "balance": 40_000_000})
     assert hours == 0.0
+
+
+def test_osrm_route_geometry_needs_two_valid_points():
+    assert osrm_route_geometry([]) == (None, None)
+    assert osrm_route_geometry([{"lat": 41.3, "lon": 69.2}]) == (None, None)
+    assert osrm_route_geometry([{"lat": 0, "lon": 0}, {"lat": 0, "lon": 0}]) == (None, None)

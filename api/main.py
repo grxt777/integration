@@ -24,6 +24,7 @@ Bank Intelligence Platform — FastAPI Backend
     GET   /api/alerts                       → ATM в critical/warning
     GET   /api/baseline                     → сводный отчёт по остаткам
     POST  /api/routes/incassation           → региональные маршруты инкассации
+    POST  /api/osrm/route                   → геометрия маршрута по дорогам (OSRM)
     GET   /api/incassation/plan             → прогнозный план инкассации
 
   Cashier Intelligence (аналитика кассиров)
@@ -93,7 +94,7 @@ from core.sqb_rates import (
     parse_sqb_rates_xlsx,
     replace_sqb_rates,
 )
-from core.incassation_router import apply_live_states, build_regional_routes, hours_to_low_cash
+from core.incassation_router import apply_live_states, build_regional_routes, hours_to_low_cash, osrm_route_geometry
 from core.cashier_analytics import (
     cashier_analytics,
     cashier_detail,
@@ -692,6 +693,18 @@ async def incassation_trip(trip_id: int):
         if int(t.get("id") or 0) == int(trip_id):
             return t
     raise HTTPException(404, f"Рейс {trip_id} не найден")
+
+
+class OsrmRouteRequest(BaseModel):
+    points: List[Dict[str, float]]
+
+
+@app.post("/api/osrm/route", summary="Геометрия маршрута по дорогам (OSRM)")
+async def osrm_route(payload: OsrmRouteRequest):
+    geom, dist = osrm_route_geometry(payload.points)
+    if not geom:
+        raise HTTPException(502, "OSRM недоступен")
+    return {"geometry": geom, "distance_km": round(float(dist or 0), 2), "provider": "osrm"}
 
 
 @app.get("/api/incassation/plan", summary="Прогнозный план инкассации")

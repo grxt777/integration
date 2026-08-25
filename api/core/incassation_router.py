@@ -575,10 +575,28 @@ def assign_calendar_dates(cars: List[Dict[str, Any]], workday_min: int = 8 * 60)
             used += dur
 
 
-def _osrm_geometry(points: Sequence[Dict[str, Any]], timeout: int = 12) -> Tuple[Optional[List[Dict[str, float]]], Optional[float]]:
-    if len(points) < 2:
+def _clean_osrm_points(points: Sequence[Dict[str, Any]]) -> List[Dict[str, float]]:
+    cleaned: List[Dict[str, float]] = []
+    for p in points or []:
+        lat = p.get("lat") if p.get("lat") is not None else p.get("latitude")
+        lon = p.get("lon") if p.get("lon") is not None else p.get("lng", p.get("longitude"))
+        try:
+            lat_f, lon_f = float(lat), float(lon)
+        except (TypeError, ValueError):
+            continue
+        if abs(lat_f) < 0.01 and abs(lon_f) < 0.01:
+            continue
+        if not (-90 <= lat_f <= 90 and -180 <= lon_f <= 180):
+            continue
+        cleaned.append({"lat": lat_f, "lon": lon_f})
+    return cleaned
+
+
+def _osrm_geometry(points: Sequence[Dict[str, Any]], timeout: int = 15) -> Tuple[Optional[List[Dict[str, float]]], Optional[float]]:
+    pts = _clean_osrm_points(points)
+    if len(pts) < 2:
         return None, None
-    coords = ";".join(f"{p['lon']},{p['lat']}" for p in points)
+    coords = ";".join(f"{p['lon']},{p['lat']}" for p in pts)
     url = f"{OSRM_BASE}/route/v1/driving/{coords}?overview=full&geometries=geojson&steps=false"
     try:
         import ssl
@@ -588,7 +606,12 @@ def _osrm_geometry(points: Sequence[Dict[str, Any]], timeout: int = 12) -> Tuple
         except Exception:
             ctx = ssl._create_unverified_context()
         req = urllib.request.Request(url, headers={"User-Agent": "bank-intelligence/1.0"})
-        with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
+        # Corporate HTTPS_PROXY often returns 403 on CONNECT to OSRM; talk to it directly.
+        opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({}),
+            urllib.request.HTTPSHandler(context=ctx),
+        )
+        with opener.open(req, timeout=timeout) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
         log.warning("OSRM unavailable: %s", exc)
@@ -603,11 +626,39 @@ def _osrm_geometry(points: Sequence[Dict[str, Any]], timeout: int = 12) -> Tuple
     return geometry, route.get("distance", 0) / 1000.0
 
 
+def osrm_route_geometry(points: Sequence[Dict[str, Any]], timeout: int = 15) -> Tuple[Optional[List[Dict[str, float]]], Optional[float]]:
+    """Snap waypoints to driving roads. Chunks long tours so OSRM URL stays valid."""
+    pts = _clean_osrm_points(points)
+    if len(pts) < 2:
+        return None, None
+    chunk_size = 24
+    if len(pts) <= chunk_size:
+        return _osrm_geometry(pts, timeout=timeout)
+
+    geom_all: List[Dict[str, float]] = []
+    dist_all = 0.0
+    i = 0
+    while i < len(pts) - 1:
+        chunk = pts[i : i + chunk_size]
+        if len(chunk) < 2:
+            break
+        geom, dist = _osrm_geometry(chunk, timeout=timeout)
+        if not geom:
+            return None, None
+        if geom_all:
+            geom_all.extend(geom[1:])
+        else:
+            geom_all.extend(geom)
+        dist_all += float(dist or 0)
+        i += chunk_size - 1
+    return geom_all or None, dist_all if geom_all else None
+
+
 def _snap_cars_to_roads(cars: List[Dict[str, Any]], speed_kmh: float) -> None:
     speed = speed_kmh or AVG_SPEED_KMH
 
     def _job(car: Dict[str, Any]):
-        geom, dist = _osrm_geometry(car.get("geometry") or [])
+        geom, dist = osrm_route_geometry(car.get("geometry") or [])
         return car, geom, dist
 
     with ThreadPoolExecutor(max_workers=4) as pool:

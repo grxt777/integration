@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Календарь инкассаций</title>
-  <script src="https://unpkg.com/lucide@latest"></script>
+  <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
   <style>
     * { box-sizing: border-box }
     body { margin: 0; background: #fff; color: #202124; font: 14px Arial, sans-serif }
@@ -189,7 +189,7 @@
     </div>
   </div>
   <script>
-    lucide.createIcons();
+    try { if (window.lucide) lucide.createIcons(); } catch (_) {}
     const base = location.origin;
     const names = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
     document.getElementById('dow').innerHTML = names.map((x) => `<div class="dow">${x}</div>`).join('');
@@ -271,7 +271,7 @@
       const start = new Date(first);
       start.setDate(first.getDate() - offset);
       let html = '';
-      for (let i = 0; i < 35; i++) {
+      for (let i = 0; i < 42; i++) {
         const d = new Date(start);
         d.setDate(start.getDate() + i);
         const k = ymd(d);
@@ -302,6 +302,13 @@
     }
 
     function renderPanel() {
+      if (!selectedDay) {
+        document.getElementById('panelTitle').textContent = 'Регионы дня';
+        document.getElementById('panelMeta').textContent = 'Выберите день в календаре';
+        document.getElementById('panelBody').innerHTML =
+          '<div class="empty-panel">Нажмите на дату — рейсы сгруппируются по вилоятам.</div>';
+        return;
+      }
       const dayEvents = events.filter((e) => eventDate(e) === selectedDay);
       const groups = groupByRegion(dayEvents);
       document.getElementById('panelTitle').textContent = formatHumanDate(selectedDay);
@@ -357,15 +364,30 @@
     }
 
     async function loadCalendar() {
-      const cal = await fetch(`${base}/api/incassation/calendar`).then((r) => r.json());
-      allEvents = cal.events || [];
-      events = visibleEvents();
-      if (!selectedDay) selectedDay = todayKey();
-      if (!events.some((e) => eventDate(e) === selectedDay) && events.length) {
-        selectedDay = eventDate(events[0]);
+      document.getElementById('status').textContent = 'Загрузка календаря…';
+      try {
+        const res = await fetch(`${base}/api/incassation/calendar`);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const cal = await res.json();
+        allEvents = cal.events || cal.trips || [];
+        events = visibleEvents();
+        if (!selectedDay) selectedDay = todayKey();
+        if (!events.some((e) => eventDate(e) === selectedDay) && events.length) {
+          selectedDay = eventDate(events[0]);
+        }
+        // Show the month that contains selected day / first event
+        if (selectedDay) {
+          const [y, m] = selectedDay.split('-').map(Number);
+          cursor = new Date(y, m - 1, 1);
+        }
+        setStatus();
+        render();
+      } catch (e) {
+        console.error(e);
+        document.getElementById('status').textContent = 'Ошибка загрузки: ' + (e.message || e);
+        document.getElementById('grid').innerHTML =
+          '<div style="grid-column:1/-1;padding:40px;color:#a50e0e;font-weight:700">Не удалось загрузить календарь. Обновите страницу или нажмите «Обновить план».</div>';
       }
-      setStatus();
-      render();
     }
 
     async function rebuildPlan() {
@@ -391,7 +413,7 @@
         document.getElementById('status').textContent = 'Ошибка: ' + e.message;
       } finally {
         btn.disabled = false;
-        lucide.createIcons();
+        try { if (window.lucide) lucide.createIcons(); } catch (_) {}
       }
     }
 
@@ -419,6 +441,14 @@
         <p style="margin-top:15px"><a href="/dashboard/map.html?trip=${encodeURIComponent(e.id || '')}" target="_self" style="color:#6f42c1;font-weight:700">Открыть карту</a></p>`;
       document.getElementById('modal').classList.add('open');
     }
+
+    window.closeModal = closeModal;
+    window.selectDay = selectDay;
+    window.changeMonth = changeMonth;
+    window.today = today;
+    window.setHorizon = setHorizon;
+    window.rebuildPlan = rebuildPlan;
+    window.details = details;
 
     loadCalendar();
   </script>

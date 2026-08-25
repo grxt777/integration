@@ -61,9 +61,6 @@
       box-shadow: var(--shadow);
     }
     .hero h2 { font-size: clamp(20px, 2.6vw, 26px); font-weight: 850; letter-spacing: -.03em; }
-    .hero p { color: var(--muted); margin-top: 6px; line-height: 1.5; max-width: 720px; font-size: 13px; }
-    .hero-meta { margin-top: 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
-
     .section-title {
       font-size: 13px; font-weight: 800; color: #334155;
       display: flex; align-items: center; gap: 8px;
@@ -153,13 +150,6 @@
     td { padding: 8px; border-bottom: 1px solid #f1f5f9; vertical-align: top; }
     th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
 
-    .check {
-      display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 800;
-      padding: 4px 10px; border-radius: 999px;
-    }
-    .check.ok { background: #dcfce7; color: #166534; }
-    .check.bad { background: #fee2e2; color: #991b1b; }
-
     .scroll {
       max-height: 420px;
       overflow: auto;
@@ -196,11 +186,6 @@
 <div class="page">
   <div class="hero">
     <h2>Остатки по филиалам</h2>
-    <p>
-      Только филиалы с загруженными остатками (связь по <b>Код БХМ</b>).
-      Сўм и валюты в своей единице. Эквивалент в сўм — по <b>SQB xarid</b> (Excel: Xarid / Sotuv).
-    </p>
-    <div id="meta" class="hero-meta">Загрузка…</div>
   </div>
 
   <div class="kpis" id="kpis"></div>
@@ -273,20 +258,14 @@
       const data = await res.json();
       render(data);
     } catch (e) {
-      document.getElementById('meta').innerHTML = `<span class="err">${e.message || e}. Сначала загрузите остатки.</span>`;
+      document.getElementById('kpis').innerHTML =
+        `<div class="kpi"><div class="l">Ошибка</div><div class="v" style="color:#b91c1c;font-size:14px">${e.message || e}</div><div class="h">Сначала загрузите остатки</div></div>`;
     }
   }
 
   function render(data) {
     const o = data.overall || {};
-    const check = data.math_check || {};
     const xr = data.exchange_rates || {};
-    const ok = !!check.regions_sum_equals_overall_uzs;
-
-    document.getElementById('meta').innerHTML =
-      `<span>В реестре: <b>${data.total_branches_in_registry || 0}</b> филиалов · с остатками: <b>${data.warehouse_branches || 0}</b></span>
-       <span class="check ${ok ? 'ok' : 'bad'}">${ok ? '✓ сумма регионов (сўм) = итог' : '⚠ сумма сўм не сходится'}</span>
-       ${xr.current_date ? `<span class="muted">Kurs: SQB xarid · ${fmtDate(xr.current_date)}</span>` : ''}`;
 
     document.getElementById('kpis').innerHTML = `
       <div class="kpi">
