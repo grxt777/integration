@@ -1535,7 +1535,7 @@ async function buildRegionalRoute(status) {
   }).filter(Boolean);
 
   const infoEl = document.getElementById('route-info');
-  if (infoEl) infoEl.innerHTML = 'Строим маршруты по дорогам только для ATM ниже нормы…';
+  if (infoEl) setRouteInfo('Строим маршруты по дорогам только для ATM ниже нормы…');
 
   try {
     const data = await fetch(
@@ -1574,10 +1574,12 @@ async function buildRegionalRoute(status) {
     renderRegionalRoutes(data);
     if (infoEl) {
       const roads = (data.cars || []).filter(c => c.routing_provider === 'osrm').length;
-      infoEl.innerHTML +=
+      setRouteInfo(
+        infoEl.innerHTML +
         `<br><a href="/dashboard/incassation.html" style="color:#7c3aed;font-weight:800">Открыть в календаре →</a>` +
         (data.saved_to_calendar ? ` · сохранено рейсов: ${data.saved_to_calendar}` : '') +
-        (roads ? ` · дороги OSRM: ${roads}` : '');
+        (roads ? ` · дороги OSRM: ${roads}` : '')
+      );
     }
   } catch (e) {
     alert('Ошибка построения регионального маршрута: ' + e.message);
@@ -1673,6 +1675,18 @@ function renderRouteSidebar(carRoutes, totalStops, totalDistKm, totalTimeMin) {
     container.appendChild(div);
   });
   hydrateIcons();
+}
+
+function setRouteInfo(html) {
+  const infoEl = document.getElementById('route-info');
+  if (!infoEl) return;
+  if (html) {
+    infoEl.innerHTML = html;
+    infoEl.style.display = '';
+  } else {
+    infoEl.innerHTML = '';
+    infoEl.style.display = 'none';
+  }
 }
 
 function moneyMln(v, digits) {
@@ -1859,11 +1873,11 @@ function renderRegionalRoutes(data) {
   const infoEl = document.getElementById('route-info');
   if (infoEl) {
     const warnings = (data.unserved_regions || []).map(x => `${x.region}: ${x.reason}`).join('<br>');
-    infoEl.innerHTML =
-      `<b>${(data.cars || []).length} маршрутов по вилоятам</b><br>` +
-      `По дорогам (OSRM) · старт/финиш: филиал «Инкассация = 1»<br>` +
+    setRouteInfo(
+      `<b>${(data.cars || []).length} маршрутов</b><br>` +
       `Остановок: ${data.total_stops} · ${data.total_dist_km} км · ~${data.est_time_min} мин` +
-      (warnings ? `<br><span style="color:#dc2626">${warnings}</span>` : '');
+      (warnings ? `<br><span style="color:#dc2626">${warnings}</span>` : '')
+    );
   }
 
   const sb = document.getElementById('route-sidebar');
@@ -1933,6 +1947,7 @@ function clearRoute() {
   routingLayers = [];
   if (depotMarker) { map.removeLayer(depotMarker); depotMarker = null; }
   document.getElementById('route-sidebar').classList.remove('open');
+  setRouteInfo('');
 }
 
 function tripRecordToCar(t) {
@@ -1991,11 +2006,12 @@ async function showTripFromQuery() {
     });
     const infoEl = document.getElementById('route-info');
     if (infoEl) {
-      infoEl.innerHTML =
+      setRouteInfo(
         `<b>${car.label}</b><br>` +
         `Дата: ${t.planned_date || '—'} · приоритет: ${t.priority || '—'}<br>` +
         `Остановок: ${(car.stops || []).length} · ${Number(car.distance_km || 0).toFixed(1)} км · ~${car.est_time_min || 0} мин<br>` +
-        `Довезти: ${moneyMln(car.refill_total || (car.stops || []).reduce((s, x) => s + stopRefill(x), 0), 0)}`;
+        `Довезти: ${moneyMln(car.refill_total || (car.stops || []).reduce((s, x) => s + stopRefill(x), 0), 0)}`
+      );
     }
     return true;
   } catch (err) {
@@ -2124,11 +2140,9 @@ function renderWSRoute(routeData) {
   const q = routeData.route_quality;
   const providers = [...new Set(routeData.cars.map(c => c.routing_provider || 'fallback'))].join(', ');
   if (q && q.saved_km > 0) {
-    document.getElementById('route-info').innerHTML =
-      `Дороги: ${providers}<br>Оптимизация: −${q.saved_km.toFixed(1)} км (${q.saved_pct}%) vs старый round-robin`;
+    setRouteInfo(`Дороги: ${providers}<br>Оптимизация: −${q.saved_km.toFixed(1)} км (${q.saved_pct}%)`);
   } else {
-    document.getElementById('route-info').innerHTML =
-      `Дороги: ${providers}<br>Алгоритм: ML-приоритет + геокластеры + 2-opt`;
+    setRouteInfo(`Дороги: ${providers}`);
   }
 
   const container = document.getElementById('rs-cars-list');
