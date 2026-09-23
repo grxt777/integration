@@ -2,19 +2,16 @@
 // DATA
 // ═══════════════════════════════════════════════════════════
 
-// ATM_META Р·Р°РіСЂСѓР¶Р°РµС‚СЃСЏ СЃ API (РµРґРёРЅС‹Р№ РёСЃС‚РѕС‡РЅРёРє РїСЂР°РІРґС‹)
+// ATM_META загружается с /api/atms (единый источник правды — реестр + реальный
+// баланс от atm_monitor, если он опрашивается для этого банкомата).
 let ATM_META = [];
 
 // ═══════════════════════════════════════════════════════════
 // STATE
 // ═══════════════════════════════════════════════════════════
 
-let allData       = {};
 let atmState      = {};
-let mlPredictions = {};
-let timeIndex     = 0;
-let timeSteps     = [];
-let simTimer      = null;
+let refreshTimer  = null;
 let selectedId    = null;
 let markers       = {};
 
@@ -399,7 +396,7 @@ initMapLayers();
 function makeIcon(status, isHighlighted = false) {
   const colors = { ok:'#22c55e', warning:'#f59e0b', critical:'#ef4444' };
   const c = colors[status] || '#94a3b8';
-  // Inline SVG — no Lucide hydrate (simulation setIcon every tick caused flicker)
+  // Inline SVG — избегаем lucide.createIcons() здесь, чтобы смена иконки не мигала
   const glyph = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" x2="22" y1="10" y2="10"/></svg>`;
 
   if (isHighlighted) {
@@ -585,6 +582,37 @@ function openBranchCashPanel(branch) {
        </div>`
     : '';
 
+  const fc = cash.forecast || null;
+  let forecastHtml = '';
+  if (fc) {
+    const savingsPositive = fc.potential_savings_uzs != null && fc.potential_savings_uzs > 0;
+    const trendUp = fc.trend_pct_per_month != null && fc.trend_pct_per_month > 0.5;
+    const trendDown = fc.trend_pct_per_month != null && fc.trend_pct_per_month < -0.5;
+    const trendLabel = trendUp ? `↑ +${fc.trend_pct_per_month}%` : trendDown ? `↓ ${fc.trend_pct_per_month}%` : '≈ стабильно';
+    const trendColor = trendUp ? '#b45309' : trendDown ? '#15803d' : '#64748b';
+    forecastHtml = `
+      <div class="bcp-card" style="margin-top:8px;background:#faf5ff;border-color:#e9d5ff">
+        <div class="bcp-label" style="color:#7c3aed">Прогноз на след. месяц</div>
+        <div class="bcp-value" style="color:#581c87;font-size:15px">${fmtBranchMoney(fc.forecast_next_month_avg_uzs)} <span style="font-size:10px;font-weight:700">сўm · можно держать</span></div>
+        <div class="bcp-hint">Диапазон: ${fmtBranchMoney(fc.forecast_next_month_min_uzs)} — ${fmtBranchMoney(fc.forecast_next_month_max_uzs)} · тренд <span style="color:${trendColor};font-weight:800">${trendLabel}</span></div>
+        <div style="display:flex;justify-content:space-between;gap:10px;margin-top:10px;padding-top:8px;border-top:1px dashed #e9d5ff">
+          <div>
+            <div style="font-size:10px;color:#64748b;font-weight:700">Тек. лимит</div>
+            <div style="font-size:13px;font-weight:850;color:#581c87">${fmtBranchMoney(fc.current_limit_uzs)}</div>
+          </div>
+          <div style="text-align:right">
+            <div style="font-size:10px;color:#64748b;font-weight:700">Рек. лимит</div>
+            <div style="font-size:13px;font-weight:850;color:#581c87">${fmtBranchMoney(fc.recommended_limit_uzs)}</div>
+          </div>
+        </div>
+        ${savingsPositive ? `
+          <div style="margin-top:8px;padding:8px 10px;border-radius:10px;background:#f0fdf4;border:1px solid #bbf7d0;color:#15803d;font-size:12px;font-weight:800">
+            ✓ Лимит можно снизить на ≈ ${fmtBranchMoney(fc.potential_savings_uzs)} сўм
+          </div>` : ''}
+        <div class="bcp-hint" style="margin-top:6px;opacity:.7">На основе истории остатков (${fc.history_days} дн.)</div>
+      </div>`;
+  }
+
   const ccyRows = (cash.currencies || [])
     .filter(c => c.amount !== null && c.amount !== undefined)
     .map(c => {
@@ -619,6 +647,7 @@ function openBranchCashPanel(branch) {
       <div class="bcp-hint">Столько максимум можно держать в сўм</div>
     </div>
     ${usage}
+    ${forecastHtml}
 
     <div class="bcp-card" style="margin-top:8px;${usdCardBorder}">
       <div class="bcp-label" style="color:${usdValueColor}">Лимит USD (минимум)</div>
@@ -828,74 +857,8 @@ async function toggleBranchesLayer() {
 // LOAD CSV
 // ═══════════════════════════════════════════════════════════
 
-// ═══════════════════════════════════════════════════════════
-// WEBSOCKET — получаем данные с FastAPI сервера
-// ═══════════════════════════════════════════════════════════
-
 // Автоматически подхватываем хост — работает и на localhost и на любом сервере
 const API_BASE = location.origin;
-const WS_URL   = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/live`;
-let   ws       = null;
-let   wsMode   = false;   // true = WebSocket активен
-
-// ── Baseline vs ML ───────────────────────────────────────────
-let _lastMlSavingsUpdate = 0;
-async function updateMlSavings() {
-  const now = Date.now();
-  if (now - _lastMlSavingsUpdate < 30_000) return;  // не чаще раз в 30с
-  _lastMlSavingsUpdate = now;
-  try {
-    const data = await fetch(`${API_BASE}/api/baseline`).then(r => r.json());
-    const saved = data.summary?.ml_cash_saved || 0;
-    const el = document.getElementById('s-ml-save');
-    if (el) el.textContent = saved > 0 ? `${(saved/1e6).toFixed(0)} млн` : '0 млн';
-    window._baselineData = data;
-  } catch(e) {}
-}
-
-async function showBaselinePanel() {
-  const panel = document.getElementById('baseline-panel');
-  panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
-  if (panel.style.display === 'none') return;
-
-  try {
-    const data = window._baselineData || await fetch(`${API_BASE}/api/baseline`).then(r => r.json());
-    window._baselineData = data;
-    const s = data.summary;
-    const topRisk = (data.atms || []).slice(0, 5);
-
-    document.getElementById('baseline-content').innerHTML = `
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
-        <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:16px;padding:12px">
-          <div style="color:#9a3412;font-size:10px;margin-bottom:4px;font-weight:800;letter-spacing:.5px">МЕТОД БАНКА</div>
-          <div style="color:#dc2626;font-size:20px;font-weight:800">${(s.bank_planned_refill/1e6).toFixed(0)} млн</div>
-          <div style="color:#667085;font-size:10px">план на 24ч по прошлым транзакциям</div>
-          <div style="margin-top:6px;color:#d97706;font-size:11px;font-weight:700"><i data-lucide="lock-keyhole" class="icon-inline"></i>заморожено у банка: ${(s.bank_frozen_cash/1e6).toFixed(0)} млн</div>
-          <div style="margin-top:6px;color:#d97706;font-size:11px;font-weight:700"><i data-lucide="history" class="icon-inline"></i>среднее снятие прошлой недели</div>
-          <div style="color:#667085;font-size:10px">${s.bank_cashout_risk} ATM могут уйти в риск</div>
-        </div>
-        <div style="background:#ecfdf5;border:1px solid #bbf7d0;border-radius:16px;padding:12px">
-          <div style="color:#166534;font-size:10px;margin-bottom:4px;font-weight:800;letter-spacing:.5px">ML ПРОГНОЗ (XGBoost)</div>
-          <div style="color:#16a34a;font-size:20px;font-weight:800">${(s.ml_recommended_refill/1e6).toFixed(0)} млн</div>
-          <div style="color:#667085;font-size:10px">рекомендовано по прогнозу +24ч</div>
-          <div style="margin-top:6px;color:#059669;font-size:11px;font-weight:700"><i data-lucide="trending-up" class="icon-inline"></i>Разница: ${(s.ml_cash_saved/1e6).toFixed(0)} млн</div>
-          <div style="color:#667085;font-size:10px">эффективность ML экономит: ${s.efficiency_gain_pct}%</div>
-        </div>
-      </div>
-      <div style="color:#667085;font-size:11px;margin-bottom:6px;font-weight:800">Топ-5 по риску cash-out:</div>
-      ${topRisk.map(atm => `
-        <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid #eef2f7;font-size:11px">
-          <span style="color:#111827;font-weight:700">${atm.name}</span>
-          <span style="color:${atm.ml_risk==='HIGH'?'#ef4444':atm.ml_risk==='MEDIUM'?'#f59e0b':'#4ade80'};font-weight:700">${atm.ml_risk}</span>
-          <span style="color:#667085">${(atm.ml_cashout_prob*100).toFixed(0)}% риск</span>
-        </div>
-      `).join('')}
-    `;
-    hydrateIcons();
-  } catch(e) {
-    document.getElementById('baseline-content').innerHTML = '<span style="color:#ef4444">Ошибка загрузки</span>';
-  }
-}
 
 function hideLoader() {
   const loader = document.getElementById('loader');
@@ -904,187 +867,6 @@ function hideLoader() {
   loader.classList.add('is-hidden');
   loader.setAttribute('hidden', '');
   loader.style.pointerEvents = 'none';
-}
-
-function connectWebSocket() {
-  // Live WS endpoint is optional; never block the map UI on it.
-  try {
-    ws = new WebSocket(WS_URL);
-  } catch (err) {
-    console.warn('WebSocket недоступен:', err);
-    return;
-  }
-
-  ws.onopen = () => {
-    console.log('WebSocket connected');
-  };
-
-  ws.onmessage = (event) => {
-    try {
-      const msg = JSON.parse(event.data);
-      wsMode = true;
-      handleServerMessage(msg);
-    } catch (err) {
-      console.warn('WebSocket message error:', err);
-    }
-  };
-
-  ws.onerror = () => {
-    console.warn('WebSocket недоступен — используем данные из БД');
-    ws = null;
-    wsMode = false;
-  };
-
-  ws.onclose = () => {
-    wsMode = false;
-    ws = null;
-  };
-}
-
-function handleServerMessage(msg) {
-  if (msg.type === 'snapshot' || msg.type === 'tick') {
-    // Обновляем мета-данные ATM из сервера
-    if (msg.meta) {
-      Object.entries(msg.meta).forEach(([id, m]) => {
-        const atmEntry = ATM_META.find(a => a.id === id);
-        if (atmEntry) {
-          // Обновляем уже существующие записи, чтобы в UI ушли реальные названия/адреса.
-          atmEntry.name = m.name;
-          atmEntry.bank = m.bank;
-          atmEntry.address = m.address;
-          atmEntry.lat = m.lat;
-          atmEntry.lon = m.lon;
-          atmEntry.capacity = m.capacity;
-          atmEntry.region = m.region; // сохранить регион
-        } else {
-          ATM_META.push({
-            id: id, name: m.name, bank: m.bank,
-            address: m.address, lat: m.lat, lon: m.lon, capacity: m.capacity,
-            region: m.region, // сохранить регион
-          });
-        }
-      });
-    }
-
-    // Обновляем ML-прогнозы
-    if (msg.predictions) {
-      Object.entries(msg.predictions).forEach(([id, p]) => {
-        mlPredictions[id] = p;
-      });
-    }
-
-    // Обновляем текущее состояние каждого ATM
-    if (msg.states) {
-      Object.entries(msg.states).forEach(([id, st]) => {
-        const atm = ATM_META.find(a => a.id === id);
-        if (!atm) return;
-
-        const pct = st.balance / atm.capacity;
-        let status = 'ok';
-        if (pct < 0.20) status = 'critical';
-        else if (pct < 0.40) status = 'warning';
-
-        atmState[id] = {
-          balance:          st.balance,
-          pct:              pct,
-          status:           status,
-          lastInc:          st.last_incassation || 'нет данных',
-          isIncNow:         !!st.is_incassation,
-          isBreakdown:      !!st.is_breakdown,
-          capacity:         atm.capacity,
-          hoursToEmpty:     st.hours_to_empty,
-          emptyAt:          st.empty_at || null,
-          isSalaryDay:      !!st.is_salary_day,
-          isNearSalary:     !!st.is_near_salary,
-          // 4 реальные кассеты с номиналами
-          cassettes:        st.cassettes || [],
-          cassetteFillPct:  st.cassettes_total_fill_pct ?? 0,
-          cassetteToFill:   st.cassettes_value_to_fill ?? 0,
-          cashOk12h:        !!st.cash_ok_12h,
-        };
-
-        if (markers[id]) {
-          const isHighlighted = selectedAtmIdsFromModal && selectedAtmIdsFromModal.has(id);
-          setAtmMarkerIcon(markers[id], status, isHighlighted);
-        }
-      });
-
-      // Статистика
-      const states = Object.values(atmState);
-      document.getElementById('s-total').textContent    = states.length;
-      document.getElementById('s-critical').textContent = states.filter(s => s.status === 'critical').length;
-      document.getElementById('s-warning').textContent  = states.filter(s => s.status === 'warning').length;
-      document.getElementById('s-ok').textContent       = states.filter(s => s.status === 'ok').length;
-      document.getElementById('s-inc').textContent      = states.filter(s => s.isIncNow).length;
-
-      const mlVals = Object.values(mlPredictions);
-      if (mlVals.length > 0) {
-        document.getElementById('s-ml-high').textContent = mlVals.filter(m => m.risk_label === 'HIGH').length;
-        document.getElementById('s-ml-med').textContent  = mlVals.filter(m => m.risk_label === 'MEDIUM').length;
-      }
-
-      // Зарплатный день
-      const salaryCount = states.filter(s => s.isSalaryDay).length;
-      const salaryEl = document.getElementById('s-salary');
-      const salaryBox = document.getElementById('salary-box');
-      if (salaryCount > 0) {
-        salaryEl.textContent = 'Сегодня!';
-        salaryBox.style.background = '#3b0764';
-        salaryBox.style.animation = 'pulse-salary 1.5s infinite';
-      } else {
-        const nearCount = states.filter(s => s.isNearSalary).length;
-        salaryEl.textContent = nearCount > 0 ? 'Скоро ±1 день' : 'Нет';
-        salaryBox.style.background = '';
-        salaryBox.style.animation = '';
-      }
-
-      // Кассеты: сколько ATM нуждаются в пополнении
-      const cassetteNeed = states.filter(s => (s.cassetteToFill || 0) > 0).length;
-      document.getElementById('s-cassette').textContent = cassetteNeed + ' ATM';
-
-      // ML экономия (периодически обновляем)
-      updateMlSavings();
-    }
-
-    // Время симуляции
-    if (msg.sim) {
-      const ts = msg.sim.current_timestamp;
-      document.getElementById('sim-time').textContent =
-        new Date(ts).toLocaleString('ru-RU', {
-          day: '2-digit', month: 'short', year: 'numeric',
-          hour: '2-digit', minute: '2-digit'
-        });
-    }
-
-    // Первый снапшот — убираем лоадер и инициализируем карту
-    if (msg.type === 'snapshot') {
-      // Строим ATM_META из данных снапшота (единый источник правды)
-      if (ATM_META.length === 0 && msg.atms) {
-        ATM_META = msg.atms.map(a => ({
-          id:       a.atm_id,
-          name:     a.name,
-          bank:     a.bank || 'Банк',
-          address:  a.address || a.name,
-          lat:      a.lat,
-          lon:      a.lon,
-          capacity: a.capacity || 50_000_000,
-          profile:  a.profile || 'residential',
-          region:   a.region, // сохранить регион
-        }));
-      }
-      document.getElementById('loader').style.display = 'none';
-      if (Object.keys(markers).length === 0) initMarkers();
-      hydrateIcons();
-    }
-
-    renderList();
-    hydrateIcons();
-  }
-
-  if (msg.type === 'route') {
-    renderWSRoute(msg.data);
-  }
-
 }
 
 async function loadAtmsFromDb() {
@@ -1104,19 +886,37 @@ async function loadAtmsFromDb() {
           else status = 'ok';
         }
         return {
-          id:       a.terminal_id,
-          name:     a.atm_number || a.terminal_id,
-          bank:     a.branch || 'SQB',
-          address:  a.address || 'Адрес не указан',
-          lat:      a.lat,
-          lon:      a.lon,
+          // Внутренний ключ карты/маршрутов/API остаётся terminal_id из реестра —
+          // это то, по чему бэкенд ищет ATM (/api/atms/{terminal_id}/...), менять нельзя.
+          id:              a.terminal_id,
+          // А вот отображаемый номер — реальный id BTech (tid), если ATM у него есть
+          // (даже когда найден только по координатам, а не по terminal_id).
+          // Иначе — как раньше, локальный номер из реестра.
+          name:            a.live_tid || a.atm_number || a.terminal_id,
+          bank:            a.branch || 'SQB',
+          address:         a.address || 'Адрес не указан',
+          lat:             a.lat,
+          lon:             a.lon,
           capacity,
           balance,
           status,
-          region:   a.region,
+          region:          a.region,
+          // Реальные данные от сборщика atm_monitor (если этот ATM им опрашивается).
+          // live_match: 'terminal_id' — точное совпадение id; 'location' — id в реестре
+          // не совпал с id BTech (разные сети), совпадение найдено по координатам.
+          live:            !!a.live,
+          liveMatch:       a.live_match || null,
+          liveTid:         a.live_tid || null,
+          agentStatus:     a.agent_status || null,
+          forecastHours:   a.forecast_hours ?? null,
+          balancePolledAt: a.balance_polled_at || null,
+          lastIncassation: a.last_incassation || null,
+          // Реальные кассеты (список, не словарь по номиналу — у части моделей
+          // бывает несколько кассет одного номинала, терять их нельзя).
+          cassettes:       Array.isArray(a.cassettes) && a.cassettes.length ? a.cassettes : null,
         };
       });
-      console.log(`Loaded ${ATM_META.length} ATMs from SQLite DB`);
+      console.log(`Loaded ${ATM_META.length} ATMs from DB (${ATM_META.filter(a => a.live).length} с живыми данными atm_monitor)`);
       return true;
     }
   } catch (err) {
@@ -1125,171 +925,121 @@ async function loadAtmsFromDb() {
   return false;
 }
 
-function hashStr(s) {
-  let h = 0;
-  const t = String(s || '');
-  for (let i = 0; i < t.length; i++) h = ((h << 5) - h) + t.charCodeAt(i);
-  return Math.abs(h);
-}
+// Оценка разбивки остатка по 4 номиналам — та же формула, что и на бэкенде
+// (api/main.py::get_atm_cassettes), пока для этого ATM нет реальных данных
+// по кассетам от atm_monitor. Честно помечена как оценка.
+// Максимум CASSETTE_MAX_COUNT купюр в одной кассете (физический потолок) —
+// баланс кассеты не подгоняется под общий остаток, а честно считается
+// как количество купюр × номинал после этого ограничения.
+const CASSETTE_SHARE = { 10000: 0.10, 50000: 0.45, 100000: 0.30, 200000: 0.15 };
+const CASSETTE_MAX_COUNT = 2000;
 
-function seedAtmSeries(atm, steps, stepMs, startMs) {
-  const cap = atm.capacity || 400000000;
-  const seed = hashStr(atm.id);
-  let bal = atm.balance != null ? Number(atm.balance) : cap * (0.22 + (seed % 55) / 100);
-  const rows = [];
-  for (let i = 0; i < steps; i++) {
-    const burn = cap * (0.008 + (seed % 9) / 900);
-    bal = Math.max(0, bal - burn * (0.6 + ((seed + i) % 5) / 10));
-    let is_inc = 0;
-    if (bal < cap * 0.20) {
-      bal = cap * (0.72 + (seed % 18) / 100);
-      is_inc = 1;
-    }
-    rows.push({
-      transactionTime: new Date(startMs + i * stepMs).toISOString(),
-      totalBalance: bal,
-      atm_capacity: cap,
-      is_incassation: is_inc,
-      low_cash_alert: bal < cap * 0.20 ? 1 : 0,
-    });
-  }
-  return rows;
-}
-
-function buildDemoTimeseries() {
-  const steps = 24;
-  const stepMs = 2 * 3600_000;
-  const startMs = Date.now() - steps * stepMs;
-  timeSteps = Array.from({ length: steps }, (_, i) => new Date(startMs + i * stepMs).toISOString());
-  timeIndex = 0;
-  allData = {};
-  ATM_META.forEach((atm) => {
-    allData[atm.id] = seedAtmSeries(atm, steps, stepMs, startMs);
+function estimateCassettes(balance, capacity) {
+  if (balance == null || !capacity) return [];
+  return Object.entries(CASSETTE_SHARE).map(([denomStr, share]) => {
+    const denom = Number(denomStr);
+    const count = Math.min(Math.floor((balance * share) / denom), CASSETTE_MAX_COUNT);
+    return {
+      denomination: denom,
+      count,
+      balance: count * denom,
+      capacity: CASSETTE_MAX_COUNT,
+      fill_pct: Math.round((count / CASSETTE_MAX_COUNT) * 100 * 10) / 10,
+    };
   });
 }
 
-// Fallback — JSON-файлы если API недоступен
-async function loadFromJSON() {
-  const loaderP = document.querySelector('#loader p');
-  try {
-    if (loaderP) loaderP.textContent = 'Загрузка банкоматов из БД...';
+// Реальные статусы кассет от BTech (не только OK/LOW/MISSING).
+const CASSETTE_STATUS_COLOR = {
+  OK: '#22c55e', FULL: '#22c55e', HIGH: '#22c55e',
+  LOW: '#f59e0b',
+  EMPTY: '#ef4444', MISSING: '#ef4444',
+  INOP: '#94a3b8', // кассета не в работе — не про уровень наличных, про исправность
+};
 
-    const dbSuccess = await loadAtmsFromDb();
-
-    // Optional local JSON only if DB empty
-    let tsData = {};
-    if (!dbSuccess) {
-      if (loaderP) loaderP.textContent = 'Загрузка истории транзакций...';
-      try {
-        const tsRes = await fetch('data/timeseries.json');
-        if (tsRes.ok) tsData = await tsRes.json();
-      } catch (_) {}
-      try {
-        const predRes = await fetch('data/predictions.json');
-        if (predRes.ok) mlPredictions = await predRes.json();
-      } catch (_) {}
-    }
-
-    const times = new Set();
-    Object.keys(tsData).forEach(id => {
-      (tsData[id] || []).forEach(r => times.add(r.transactionTime));
-    });
-
-    if (dbSuccess || times.size > 0) {
-      if (times.size > 0) {
-        timeSteps = [...times].sort();
-        allData = tsData;
-      } else {
-        buildDemoTimeseries();
-      }
-      hideLoader();
-      startSimulation();
-    } else {
-      buildDemoTimeseries();
-      hideLoader();
-      startSimulation();
-    }
-
-    await showTripFromQuery();
-  } catch (err) {
-    console.warn('Ошибка при загрузке:', err);
-    hideLoader();
-    await showTripFromQuery();
+// Плитки кассет для карточки списка. Реальные кассеты — список (не словарь по
+// номиналу): у части моделей встречается несколько кассет одного номинала
+// (например, две по 200 000 — их нельзя схлопывать в одну).
+function cassetteTilesHtml(cassettes, source) {
+  if (source === 'live') {
+    return (cassettes || []).map(c => {
+      const color = CASSETTE_STATUS_COLOR[c.status] || '#94a3b8';
+      const denomTxt = c.nominal >= 1000 ? (c.nominal / 1000).toFixed(0) + 'к' : (c.nominal ?? '—');
+      return `<div style="background:#f8fafc;border:1px solid #e5eaf3;border-radius:10px;padding:5px 7px">
+        <div style="display:flex;justify-content:space-between;font-size:9px;color:#667085;margin-bottom:4px;font-weight:700">
+          <span>${denomTxt} сум</span><span style="color:${color}">${c.status || '—'}</span>
+        </div>
+        <div style="font-size:9px;color:#667085">${c.balance != null ? (c.balance/1e6).toFixed(1) + ' млн' : '—'} · ${c.count ?? '—'} шт</div>
+      </div>`;
+    }).join('');
   }
+  return (cassettes || []).map(c => {
+    const fillColor = c.fill_pct > 60 ? '#22c55e' : c.fill_pct > 25 ? '#f59e0b' : '#ef4444';
+    const denom = c.denomination >= 1000 ? (c.denomination/1000).toFixed(0)+'к' : c.denomination;
+    return `<div style="background:#f8fafc;border:1px solid #e5eaf3;border-radius:10px;padding:5px 7px">
+      <div style="display:flex;justify-content:space-between;font-size:9px;color:#667085;margin-bottom:4px;font-weight:700">
+        <span>${denom} сум</span><span style="color:${fillColor}">${c.fill_pct}%</span>
+      </div>
+      <div style="height:5px;background:#e5eaf3;border-radius:999px;overflow:hidden">
+        <div style="height:4px;background:${fillColor};border-radius:2px;width:${Math.min(c.fill_pct,100)}%"></div>
+      </div>
+      <div style="font-size:9px;color:#667085;margin-top:3px">${(c.balance/1e6).toFixed(0)} млн · ${c.count}/${c.capacity}</div>
+    </div>`;
+  }).join('');
 }
 
-function generateSyntheticData() {
-  const start = new Date('2024-10-01');
-  const times = [];
-  for (let i = 0; i < 24 * 30; i++) {
-    times.push(new Date(start.getTime() + i * 2 * 3600_000).toISOString());
-  }
-  timeSteps = times;
+// Обновлённая метка "Обновлено:" в шапке — самый свежий реальный опрос среди
+// загруженных ATM (раньше здесь была фейковая крутящаяся "Симуляция").
+function updateFreshnessLabel() {
+  const el = document.getElementById('sim-time');
+  if (!el) return;
+  let latest = null;
   ATM_META.forEach(atm => {
-    let bal = atm.capacity * 0.8;
-    allData[atm.id] = times.map(t => {
-      const outcome = Math.floor(Math.random() * atm.capacity * 0.03);
-      bal = Math.max(0, bal - outcome);
-      if (bal < atm.capacity * 0.2) bal = atm.capacity * 0.85;
-      return { transactionTime: t, totalBalance: bal, atm_capacity: atm.capacity,
-               is_incassation: 0, low_cash_alert: bal < atm.capacity * 0.2 ? 1 : 0 };
-    });
+    if (atm.balancePolledAt && (!latest || atm.balancePolledAt > latest)) latest = atm.balancePolledAt;
   });
+  const d = latest ? new Date(latest) : new Date();
+  el.textContent = d.toLocaleString('ru-RU', {
+    day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+  }) + (latest ? '' : ' (реестр)');
 }
 
-// ═══════════════════════════════════════════════════════════
-// SIMULATION TICK
-// ═══════════════════════════════════════════════════════════
-
-function tick() {
-  if (timeIndex >= timeSteps.length) { timeIndex = 0; }
-  const ts = timeSteps[timeIndex];
-
-  document.getElementById('sim-time').textContent =
-    new Date(ts).toLocaleString('ru-RU', {
-      day:'2-digit', month:'short', year:'numeric',
-      hour:'2-digit', minute:'2-digit'
-    });
-
-  let nCrit = 0, nWarn = 0, nOk = 0, nInc = 0;
+// Строит atmState напрямую из реальных данных ATM_META (без фейкового тика)
+// и обновляет KPI/маркеры/список.
+function syncAtmStateFromMeta() {
+  let nCrit = 0, nWarn = 0, nOk = 0;
 
   ATM_META.forEach(atm => {
-    const rows = allData[atm.id] || [];
-    const row  = rows[Math.min(timeIndex, rows.length - 1)];
-    if (!row) return;
-
-    const pct = row.totalBalance / atm.capacity;
-    let status = 'ok';
-    if (pct < 0.2) { status = 'critical'; nCrit++; }
-    else if (pct < 0.4) { status = 'warning'; nWarn++; }
-    else { nOk++; }
-
-    if (row.is_incassation) nInc++;
-
-    const lastIncRow = rows.slice(0, timeIndex + 1).reverse().find(r => r.is_incassation);
-    const lastInc = lastIncRow
-      ? new Date(lastIncRow.transactionTime).toLocaleDateString('ru-RU')
-      : 'нет данных';
+    const pct = (atm.balance != null && atm.capacity) ? atm.balance / atm.capacity : null;
+    if (atm.status === 'critical') nCrit++;
+    else if (atm.status === 'warning') nWarn++;
+    else if (atm.status === 'ok') nOk++;
 
     atmState[atm.id] = {
-      balance: row.totalBalance,
-      pct: pct,
-      status,
-      lastInc,
-      isIncNow: !!row.is_incassation,
-      capacity: atm.capacity,
+      balance:       atm.balance,
+      pct:           pct,
+      status:        atm.status,
+      lastInc:       atm.lastIncassation ? new Date(atm.lastIncassation).toLocaleString('ru-RU') : 'нет данных',
+      isIncNow:      false,
+      capacity:      atm.capacity,
+      live:          atm.live,
+      liveMatch:     atm.liveMatch,
+      agentStatus:   atm.agentStatus,
+      forecastHours: atm.forecastHours,
+      // Реальные кассеты от atm_monitor, если есть; иначе — честно помеченная
+      // оценка от общего остатка (см. estimateCassettes).
+      cassettes:       atm.cassettes || estimateCassettes(atm.balance, atm.capacity),
+      cassettesSource: atm.cassettes ? 'live' : 'estimated',
+      cassetteToFill:  Math.max(0, (atm.capacity || 0) - (atm.balance || 0)) > (atm.capacity || 0) * 0.2 ? 1 : 0,
     };
 
-    // обновляем маркер
     if (markers[atm.id]) {
       const isHighlighted = selectedAtmIdsFromModal && selectedAtmIdsFromModal.has(atm.id);
-      setAtmMarkerIcon(markers[atm.id], status, isHighlighted);
+      setAtmMarkerIcon(markers[atm.id], atm.status, isHighlighted);
     }
   });
 
-  renderKpisAndMarkers(nCrit, nWarn, nOk, nInc);
-  if (timeIndex % 3 === 0) renderList();
-  timeIndex++;
+  renderKpisAndMarkers(nCrit, nWarn, nOk, 0);
+  updateFreshnessLabel();
 }
 
 function renderKpisAndMarkers(nCrit, nWarn, nOk, nInc) {
@@ -1299,26 +1049,32 @@ function renderKpisAndMarkers(nCrit, nWarn, nOk, nInc) {
   set('s-warning', nWarn);
   set('s-ok', nOk);
   set('s-inc', nInc);
-  const mlVals = Object.values(mlPredictions);
-  if (mlVals.length > 0) {
-    set('s-ml-high', mlVals.filter(m => m.risk_label === 'HIGH').length);
-    set('s-ml-med', mlVals.filter(m => m.risk_label === 'MEDIUM').length);
-  }
 }
 
-function startLiveMap() {
-  if (simTimer) { clearInterval(simTimer); simTimer = null; }
+// Первичная загрузка: реестр + реальные данные, один раз строим маркеры.
+async function initAtms() {
+  const loaderP = document.querySelector('#loader p');
+  if (loaderP) loaderP.textContent = 'Загрузка банкоматов...';
+  await loadAtmsFromDb();
+  syncAtmStateFromMeta();
   initMarkers(true);
   renderList();
-  hydrateIcons();
+  hideLoader();
+  await showTripFromQuery();
+  startAutoRefresh();
 }
 
-function startSimulation() {
-  if (simTimer) clearInterval(simTimer);
-  initMarkers(true);
-  tick();
-  renderList();
-  simTimer = setInterval(tick, 1500);
+// Периодическое реальное обновление вместо фейкового тика — источник данных
+// (atm_monitor) сам опрашивается раз в час, чаще дёргать бэкенд смысла нет.
+function startAutoRefresh() {
+  if (refreshTimer) clearInterval(refreshTimer);
+  refreshTimer = setInterval(async () => {
+    const ok = await loadAtmsFromDb();
+    if (!ok) return;
+    syncAtmStateFromMeta();
+    renderList();
+    updateMarkersHighlight(getFilteredATMs());
+  }, 5 * 60 * 1000);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1344,14 +1100,11 @@ function renderList() {
     const balDisp = (st.balance / 1_000_000).toFixed(1);
     const capDisp = (atm.capacity / 1_000_000).toFixed(0);
 
-    const ml  = mlPredictions[atm.id] || {};
-    const mlBal  = ml.pred_balance_24h  ? (ml.pred_balance_24h  / 1_000_000).toFixed(1) : null;
-    const mlPct  = ml.pred_balance_pct_24h ?? ml.pred_balance_pct ?? null;
-    const mlProbRaw = ml.pred_cashout_prob ?? ml.cashout_prob;
-    const mlProb = mlProbRaw != null ? (mlProbRaw * 100).toFixed(0) : null;
-    const mlRisk = ml.risk_label || null;
-    const mlRiskColor = mlRisk ? getRiskColor(mlRisk) : '#64748b';
-    const mlRiskIcon  = mlRisk ? getRiskIcon(mlRisk)  : '';
+    // Реальный прогноз площадки (BTech), не ML — своя ML-модель ещё не построена,
+    // накопленная история (/api/atms/{id}/history) — задел под неё.
+    const forecastTxt = st.forecastHours != null
+      ? `~${st.forecastHours < 24 ? Math.round(st.forecastHours) + ' ч' : Math.round(st.forecastHours / 24) + ' д'}`
+      : null;
 
     const card = document.createElement('div');
     card.className = `atm-card ${st.status} ${selectedId === atm.id ? 'selected' : ''}`;
@@ -1372,55 +1125,26 @@ function renderList() {
           <div class="bar-fill fill-${st.status}" style="width:${pctDisp}%"></div>
         </div>
       </div>
-      ${mlBal ? `
-      <div class="atm-card-bar-wrap" style="margin-top:6px">
-        <div class="bar-labels">
-          <span style="color:#4f46e5;font-weight:700">${appIcon('brain-circuit')}Прогноз +24ч</span>
-          <span class="val" style="color:#4f46e5">${mlBal} млн (${mlPct}%)</span>
-        </div>
-        <div class="bar-bg">
-          <div class="bar-fill" style="width:${Math.min(mlPct,100)}%;background:linear-gradient(90deg,#6366f1,#818cf8)"></div>
-        </div>
-      </div>
+      ${forecastTxt ? `
       <div style="margin-top:5px;display:flex;align-items:center;justify-content:space-between;font-size:11px">
-        <span style="color:#667085">Риск cash-out:</span>
-        <span style="color:${mlRiskColor};font-weight:700">${mlRiskIcon} ${mlRisk} · ${mlProb}%</span>
+        <span style="color:#667085">${appIcon('activity')}Прогноз площадки:</span>
+        <span style="color:#4f46e5;font-weight:700">${forecastTxt} до cash-out</span>
       </div>` : ''}
       <div class="atm-card-footer" style="margin-top:6px">
         <span>${pctDisp}% заполнен</span>
         ${st.isIncNow ? '<span class="highlight">&#x21BB; Инкассация сейчас</span>' : '<span>Посл. инк.: ' + st.lastInc + '</span>'}
       </div>
 
-      <!-- 4 Кассеты с реальными номиналами -->
+      <!-- Кассеты: реальные (atm_monitor, список — без группировки по номиналу,
+           у части моделей бывает несколько кассет одного номинала) или оценка -->
       <div style="margin-top:7px">
-        <div style="font-size:10px;color:#667085;margin-bottom:5px;text-transform:uppercase;letter-spacing:.5px;font-weight:800">Кассеты</div>
+        <div style="font-size:10px;color:#667085;margin-bottom:5px;text-transform:uppercase;letter-spacing:.5px;font-weight:800">${st.cassettesSource === 'live' ? 'Кассеты (реальные, atm_monitor)' : 'Кассеты (оценка от остатка)'}</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:3px">
-          ${(st.cassettes || []).map(c => {
-            const fillColor = c.fill_pct > 60 ? '#22c55e' : c.fill_pct > 25 ? '#f59e0b' : '#ef4444';
-            const denom = c.denomination >= 1000 ? (c.denomination/1000).toFixed(0)+'к' : c.denomination;
-            return `<div style="background:#f8fafc;border:1px solid #e5eaf3;border-radius:10px;padding:5px 7px">
-              <div style="display:flex;justify-content:space-between;font-size:9px;color:#667085;margin-bottom:4px;font-weight:700">
-                <span>${denom} сум</span><span style="color:${fillColor}">${c.fill_pct}%</span>
-              </div>
-              <div style="height:5px;background:#e5eaf3;border-radius:999px;overflow:hidden">
-                <div style="height:4px;background:${fillColor};border-radius:2px;width:${Math.min(c.fill_pct,100)}%"></div>
-              </div>
-              <div style="font-size:9px;color:#667085;margin-top:3px">${(c.balance/1e6).toFixed(0)} млн · ${c.count}/${c.capacity}</div>
-            </div>`;
-          }).join('')}
+          ${cassetteTilesHtml(st.cassettes, st.cassettesSource)}
         </div>
         ${st.cassetteToFill > 0 ? `<div style="margin-top:3px;font-size:10px;color:#f59e0b">
           ${appIcon('arrow-up-circle')}Нужно довезти: ${(st.cassetteToFill/1e6).toFixed(0)} млн
         </div>` : `<div style="margin-top:3px;font-size:10px;color:#16a34a">${appIcon('check-circle-2')}Кассеты заполнены</div>`}
-      </div>
-
-      <!-- Время опустошения + зарплатный день -->
-      <div style="margin-top:5px;display:flex;gap:8px;font-size:11px;flex-wrap:wrap">
-        ${st.emptyAt ? `<span style="color:${st.status==='critical'?'#dc2626':st.status==='warning'?'#d97706':'#667085'}">
-          ${appIcon('timer')}Опустеет: <b>${st.emptyAt}</b>
-        </span>` : ''}
-        ${st.isSalaryDay ? `<span style="color:#7c3aed;font-weight:700">${appIcon('calendar-days')}Зарплатный день</span>` : ''}
-        ${!st.isSalaryDay && st.isNearSalary ? `<span style="color:#7c3aed">${appIcon('calendar-clock')}Скоро зарплата</span>` : ''}
       </div>
     `;
     card.onclick = () => selectAtm(atm.id);
@@ -1444,29 +1168,49 @@ function selectAtm(id) {
 
   map.setView([atm.lat, atm.lon], 16, { animate: true });
 
-  const ml2  = mlPredictions[id] || {};
-  const mlB2 = ml2.pred_balance_24h ? (ml2.pred_balance_24h / 1_000_000).toFixed(1) : '—';
-  const mlP2 = ml2.pred_balance_pct_24h ?? ml2.pred_balance_pct ?? '—';
-  const mlR2 = ml2.risk_label || '—';
-  const mlPrRaw2 = ml2.pred_cashout_prob ?? ml2.cashout_prob;
-  const mlPr2 = mlPrRaw2 != null ? (mlPrRaw2 * 100).toFixed(0) + '%' : '—';
-  const mlRC2 = getRiskColor(mlR2);
-
   const stPop = atmState[id] || {};
-  const salaryBadge = stPop.isSalaryDay
-    ? `<span style="background:#ede9fe;color:#6d28d9;padding:3px 7px;border-radius:999px;font-size:10px;margin-left:6px;font-weight:800">${appIcon('calendar-days')}Зарплатный день</span>`
-    : stPop.isNearSalary
-      ? `<span style="background:#f5f3ff;color:#7c3aed;padding:3px 7px;border-radius:999px;font-size:10px;margin-left:6px;font-weight:800">${appIcon('calendar-clock')}Скоро зарплата</span>`
-      : '';
 
-  const cassIcons = Array.from({length: stPop.cassetteCap || 4}, (_, i) =>
-    `<span style="display:inline-block;width:14px;height:20px;border-radius:2px;border:1px solid #475569;
-      background:${i < (stPop.cassetteLoaded || 0) ? '#16a34a' : '#e5eaf3'};
-      font-size:8px;line-height:20px;text-align:center">${i < (stPop.cassetteLoaded||0)?'▮':''}</span>`
-  ).join('');
+  // Строки для попапа (та же логика реальных/оценочных кассет, что и в
+  // cassetteTilesHtml для карточек списка, просто в виде списка, а не плиток).
+  function cassettesHtml(cassettes, source) {
+    const label = source === 'live' ? 'Кассеты (реальные, atm_monitor)' : 'Кассеты (оценка от остатка)';
+    let rows;
+    if (source === 'live') {
+      // Реальные кассеты — список, не словарь по номиналу: у части моделей
+      // бывает несколько кассет одного номинала, их нельзя схлопывать в одну.
+      // "% заполнения" не показываем — реальной ёмкости кассеты BTech не отдаёт,
+      // вместо этого настоящий статус самой площадки (OK/LOW/EMPTY/INOP/...).
+      rows = (cassettes || []).map(c => {
+        const color = CASSETTE_STATUS_COLOR[c.status] || '#94a3b8';
+        return `<div style="display:flex;align-items:center;justify-content:space-between;gap:5px;margin-bottom:3px;font-size:10px">
+          <span style="color:#667085">${c.nominal ? Number(c.nominal).toLocaleString('ru-RU') : '—'} сум</span>
+          <span style="color:#475569">${c.count ?? '—'} шт · ${c.balance != null ? (c.balance/1e6).toFixed(1) + ' млн' : '—'}</span>
+          <span style="color:${color};font-weight:700">${c.status || '—'}</span>
+        </div>`;
+      }).join('');
+    } else {
+      rows = (cassettes || []).map(c => {
+        const fillColor = c.fill_pct > 60 ? '#22c55e' : c.fill_pct > 25 ? '#f59e0b' : '#ef4444';
+        const denom = c.denomination >= 1000 ? (c.denomination / 1000).toFixed(0) + 'к' : c.denomination;
+        return `<div style="display:flex;align-items:center;gap:5px;margin-bottom:3px;font-size:10px">
+          <span style="color:#667085;width:40px">${denom} сум</span>
+          <div style="flex:1;height:6px;background:#e5eaf3;border-radius:999px;overflow:hidden">
+            <div style="height:6px;background:${fillColor};border-radius:3px;width:${Math.min(c.fill_pct || 0, 100)}%"></div>
+          </div>
+          <span style="color:${fillColor};width:32px;text-align:right">${c.fill_pct != null ? c.fill_pct + '%' : '—'}</span>
+          <span style="color:#475569;font-size:9px">${c.balance != null ? (c.balance / 1e6).toFixed(0) + ' млн' : ''}</span>
+        </div>`;
+      }).join('');
+    }
+    return `<div style="font-size:10px;color:#667085;margin-bottom:5px;text-transform:uppercase;letter-spacing:.5px;font-weight:800">${label}</div>${rows}`;
+  }
 
-  markers[id].bindPopup(`
-    <div class="popup-title">${atm.name}${salaryBadge}</div>
+  const forecastTxt = stPop.forecastHours != null
+    ? `~${stPop.forecastHours < 24 ? Math.round(stPop.forecastHours) + ' ч' : Math.round(stPop.forecastHours / 24) + ' д'}`
+    : '—';
+
+  const popupHtml = (cassettes, source) => `
+    <div class="popup-title">${atm.name}</div>
     <div class="popup-row">Адрес: <span>${atm.address}</span></div>
     <hr style="border-color:#e5eaf3;margin:8px 0">
 
@@ -1474,32 +1218,21 @@ function selectAtm(id) {
     <div class="popup-row">Статус: <span style="color:${
       stPop.status==='ok'?'#16a34a':stPop.status==='warning'?'#d97706':'#dc2626'
     }">${stPop.status==='ok'?'Норма':stPop.status==='warning'?'Предупреждение':'Критично'}</span></div>
-    ${stPop.emptyAt ? `<div class="popup-row">${appIcon('timer')}Опустеет: <span style="color:#dc2626;font-weight:800">${stPop.emptyAt}</span></div>` : ''}
+    ${stPop.agentStatus ? `<div class="popup-row">Агент: <span style="color:${stPop.agentStatus === 'online' ? '#16a34a' : '#dc2626'}">${stPop.agentStatus}</span></div>` : ''}
+    ${stPop.live && stPop.liveMatch === 'location' ? `<div class="popup-row" style="font-size:10px;color:#94a3b8">${appIcon('map-pin')}Найден по координатам (id в реестре не совпал с BTech)</div>` : ''}
 
     <hr style="border-color:#e5eaf3;margin:8px 0">
-    <div style="font-size:10px;color:#667085;margin-bottom:5px;text-transform:uppercase;letter-spacing:.5px;font-weight:800">4 Кассеты</div>
-    ${(stPop.cassettes || []).map(c => {
-      const fillColor = c.fill_pct > 60 ? '#22c55e' : c.fill_pct > 25 ? '#f59e0b' : '#ef4444';
-      const denom = c.denomination >= 1000 ? (c.denomination/1000).toFixed(0)+'к' : c.denomination;
-      return `<div style="display:flex;align-items:center;gap:5px;margin-bottom:3px;font-size:10px">
-        <span style="color:#667085;width:40px">${denom} сум</span>
-        <div style="flex:1;height:6px;background:#e5eaf3;border-radius:999px;overflow:hidden">
-          <div style="height:6px;background:${fillColor};border-radius:3px;width:${Math.min(c.fill_pct,100)}%"></div>
-        </div>
-        <span style="color:${fillColor};width:32px;text-align:right">${c.fill_pct}%</span>
-        <span style="color:#475569;font-size:9px">${(c.balance/1e6).toFixed(0)} млн</span>
-      </div>`;
-    }).join('')}
-    ${stPop.cassetteToFill > 0 ? `<div style="margin-top:2px;font-size:10px;color:#f59e0b">${appIcon('arrow-up-circle')}Нужно: ${(stPop.cassetteToFill/1e6).toFixed(0)} млн</div>` : `<div style="font-size:10px;color:#16a34a">${appIcon('check-circle-2')}Все кассеты заполнены</div>`}
+    ${cassettesHtml(cassettes, source)}
 
     <hr style="border-color:#e5eaf3;margin:8px 0">
-    <div style="font-size:11px;color:#4f46e5;font-weight:800;margin-bottom:3px">${appIcon('brain-circuit')}ML Прогноз +24ч</div>
-    <div class="popup-row">Баланс через 24ч: <span style="color:#4f46e5">${mlB2} млн (${mlP2}%)</span></div>
-    <div class="popup-row">Риск cash-out: <span style="color:${mlRC2};font-weight:700">${getRiskIcon(mlR2)} ${mlR2} · ${mlPr2}</span></div>
+    <div class="popup-row">Прогноз площадки до cash-out: <span style="color:#4f46e5">${forecastTxt}</span></div>
     <div class="popup-row">Посл. инкассация: <span>${stPop.lastInc}</span></div>
-  `).openPopup();
-  hydrateIcons();
+  `;
 
+  // Реальные кассеты уже приходят вместе со списком ATM (bulk-запрос в
+  // /api/atms), отдельный запрос по клику больше не нужен.
+  markers[id].bindPopup(popupHtml(stPop.cassettes, stPop.cassettesSource)).openPopup();
+  hydrateIcons();
   renderList();
 }
 
@@ -1528,22 +1261,18 @@ async function buildRegionalRoute(status) {
 
   const speedKmh = parseInt(document.getElementById('speed-kmh')?.value, 10) || 30;
   const maxStops = parseInt(document.getElementById('max-stops')?.value, 10) || 12;
-  const states = ATM_META.map(atm => {
-    const st = atmState[atm.id];
-    if (!st) return null;
-    return { terminal_id: atm.id, balance: Math.round(st.balance || 0), status: st.status };
-  }).filter(Boolean);
 
   const infoEl = document.getElementById('route-info');
   if (infoEl) setRouteInfo('Строим маршруты по дорогам только для ATM ниже нормы…');
 
   try {
+    // Баланс уже реальный на бэкенде (atm_monitor), клиенту ничего подмешивать не нужно.
     const data = await fetch(
       `${API_BASE}/api/routes/incassation?status=${status}&speed_kmh=${speedKmh}&max_stops=${maxStops}&snap_roads=true`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ states, persist: true }),
+        body: JSON.stringify({ persist: true }),
       }
     ).then(r => r.json());
     if (!data.cars || !data.cars.length) {
@@ -2021,175 +1750,18 @@ async function showTripFromQuery() {
 }
 
 // ═══════════════════════════════════════════════════════════
-// ML PREDICTIONS
+// ML PREDICTIONS — задел: реальная история теперь копится в atm_monitor
+// (GET /api/atms/{id}/history), но собственной ML-модели пока нет.
 // ═══════════════════════════════════════════════════════════
 
-// loadPredictions() теперь интегрирована в WebSocket snapshot
-
-function getRiskColor(label) {
-  if (label === 'HIGH')   return '#ef4444';
-  if (label === 'MEDIUM') return '#f59e0b';
-  return '#22c55e';
-}
-
-function getRiskIcon(label) {
-  if (label === 'HIGH')   return appIcon('octagon-alert');
-  if (label === 'MEDIUM') return appIcon('circle-alert');
-  return appIcon('shield-check');
-}
-
-// Рендер маршрута полученного по WebSocket (данные от FastAPI)
-function renderWSRoute(routeData) {
-  if (!routeData || !routeData.cars) return;
-  if (_shownTripId) return;
-
-  // Очищаем старые слои
-  routingLayers.forEach(l => map.removeLayer(l));
-  routingLayers = [];
-  if (depotMarker) { map.removeLayer(depotMarker); depotMarker = null; }
-
-  // Маркер депо
-  depotMarker = L.marker([DEPOT.lat, DEPOT.lon], {
-    icon: L.divIcon({
-      className: '',
-      html: `<div style="
-        width:38px;height:38px;border-radius:10px;
-        background:#ffffff;border:2px solid #2563eb;
-        display:flex;align-items:center;justify-content:center;
-        font-size:20px;box-shadow:0 12px 28px rgba(37,99,235,.22);
-      ">${appIcon('warehouse')}</div>`,
-      iconSize: [38,38], iconAnchor: [19,19]
-    })
-  }).addTo(map).bindPopup(`<b>Депо инкассаторов</b><br>${DEPOT.name}`);
-  routingLayers.push(depotMarker);
-
-  // Рисуем маршруты по дорогам (OSRM), не прямой линией
-  const allPts = [];
-  const gen = ++_routeDrawGen;
-  routeData.cars.forEach((car, gi) => {
-    if (!car.departure_branch) {
-      car.departure_branch = { lat: DEPOT.lat, lon: DEPOT.lon, name: DEPOT.name };
-    }
-    snapAndDrawCar(car, car.color || CAR_COLORS[gi % CAR_COLORS.length], gen).then((pts) => {
-      allPts.push(...pts);
-      if (allPts.length > 0) map.fitBounds(L.latLngBounds(allPts), { padding: [40, 40] });
-    });
-
-    const fallbackPts = [
-      L.latLng(DEPOT.lat, DEPOT.lon),
-      ...car.stops.map(s => L.latLng(s.lat, s.lon)),
-      L.latLng(DEPOT.lat, DEPOT.lon),
-    ];
-    allPts.push(...fallbackPts);
-
-    // Маркеры остановок
-    car.stops.forEach((stop, si) => {
-      const pct   = stop.balance_pct;
-      const color = stop.status === 'critical' ? '#ef4444'
-                  : stop.status === 'warning'  ? '#f59e0b' : '#22c55e';
-
-      const stopMarker = L.marker([stop.lat, stop.lon], {
-        icon: L.divIcon({
-          className: '',
-          html: `
-            <div style="
-              width:32px;height:32px;border-radius:50%;
-              background:${car.color};border:3px solid #fff;
-              display:flex;align-items:center;justify-content:center;
-              font-size:12px;font-weight:800;color:#fff;
-              box-shadow:0 0 10px ${car.color}cc, 0 2px 6px #0008;
-            ">${si+1}</div>
-            <div style="
-              position:absolute;bottom:-5px;left:50%;transform:translateX(-50%);
-              width:8px;height:8px;border-radius:50%;
-              background:${color};border:2px solid #fff;
-              box-shadow:0 0 6px ${color};
-            "></div>`,
-          iconSize: [32,32], iconAnchor: [16,16]
-        })
-      }).addTo(map).bindPopup(`
-        <div class="popup-title">${gi+1}${String.fromCharCode(64+si+1)}. ${stop.name}</div>
-        <div class="popup-row">Банк: <span>${stop.bank}</span></div>
-        <div class="popup-row">Остаток: <span>${(stop.balance/1e6).toFixed(1)} млн · ${pct.toFixed(0)}%</span></div>
-        <div class="popup-row">Довезти: <span>${((stop.refill_amount || 0)/1e6).toFixed(0)} млн</span></div>
-        <div class="popup-row">Статус: <span style="color:${color}">${
-          stop.status==='critical'?'Критично':stop.status==='warning'?'Предупреждение':'Норма'
-        }</span></div>
-        ${stop.cashout_prob!=null ? `<div class="popup-row">ML риск: <span>${(stop.cashout_prob*100).toFixed(0)}%</span></div>` : ''}
-        ${stop.empty_at ? `<div class="popup-row">Опустеет: <span>${stop.empty_at}</span></div>` : ''}
-        ${stop.priority_score!=null ? `<div class="popup-row">Приоритет: <span>${stop.priority_score}</span></div>` : ''}
-        <div class="popup-row">Маршрут: <span>${car.label}</span></div>
-      `);
-      routingLayers.push(stopMarker);
-    });
-  });
-
-  // Подгоняем карту под маршруты
-  if (allPts.length > 0) map.fitBounds(L.latLngBounds(allPts), { padding: [40, 40] });
-
-  // ── Sidebar ──────────────────────────────────────────────
-  const sb = document.getElementById('route-sidebar');
-  if (!sb) return;
-  openRouteSidebar();
-
-  document.getElementById('rs-cars-count').textContent  = routeData.cars.length;
-  document.getElementById('rs-stops-count').textContent = routeData.total_stops;
-  document.getElementById('rs-distance').textContent    = routeData.total_dist_km.toFixed(1) + ' км';
-  document.getElementById('rs-time').textContent        = routeData.est_time_min + ' мин';
-
-  const q = routeData.route_quality;
-  const providers = [...new Set(routeData.cars.map(c => c.routing_provider || 'fallback'))].join(', ');
-  if (q && q.saved_km > 0) {
-    setRouteInfo(`Дороги: ${providers}<br>Оптимизация: −${q.saved_km.toFixed(1)} км (${q.saved_pct}%)`);
-  } else {
-    setRouteInfo(`Дороги: ${providers}`);
-  }
-
-  const container = document.getElementById('rs-cars-list');
-  container.innerHTML = routeData.cars.map(car => {
-    const stops = car.stops.map((s, si) => {
-      const pct    = s.balance_pct.toFixed(0);
-      const balStr = (s.balance / 1e6).toFixed(1) + ' млн';
-      const refill = ((s.refill_amount || 0) / 1e6).toFixed(0) + ' млн';
-      const balCls = s.status === 'critical' ? 'bal-crit'
-                   : s.status === 'warning'  ? 'bal-warn' : 'bal-ok';
-      const prob   = s.cashout_prob != null
-                   ? `<span style="color:#7c3aed;font-size:10px;"> · ML риск ${(s.cashout_prob*100).toFixed(0)}%</span>` : '';
-      return `
-        <div class="rs-stop" onclick="selectAtm('${s.atm_id}')" style="cursor:pointer">
-          <div class="rs-stop-num" style="background:${car.color}">${si+1}</div>
-          <div class="rs-stop-name">
-            ${s.name}<br>
-            <span style="color:#667085;font-size:10px">${s.bank}</span>
-          </div>
-          <div class="rs-stop-bal ${balCls}">${balStr}<br>
-            <span style="font-weight:500;color:#667085">${pct}% · +${refill}${prob}</span>
-          </div>
-        </div>`;
-    }).join('');
-
-    return `
-      <div class="rs-car">
-        <div class="rs-car-header" style="background:${car.color}22;border:1px solid ${car.color}55;border-bottom:none;">
-          <div class="rs-car-dot" style="background:${car.color}"></div>
-          <span style="color:${car.color};font-weight:700">${car.label}</span>
-          <span style="margin-left:auto;color:#667085;font-size:11px;font-weight:600">
-            ${car.stops.length} ост. · ${car.total_dist_km.toFixed(1)} км · ${car.est_time_min} мин · ${(car.refill_total/1e6).toFixed(0)} млн
-          </span>
-        </div>
-        <div class="rs-stops">${stops}</div>
-      </div>`;
-  }).join('');
-  hydrateIcons();
-}
 
 // ═══════════════════════════════════════════════════════════
-// BOOT — сначала БД/карта, WebSocket только опционально
+// BOOT — реестр + реальные данные atm_monitor, без симуляции
 // ═══════════════════════════════════════════════════════════
 hydrateIcons();
-loadFromJSON().finally(() => {
+initAtms().catch(err => {
+  console.warn('Ошибка инициализации карты:', err);
   hideLoader();
-  try { connectWebSocket(); } catch (_) {}
 });
 setTimeout(hideLoader, 8000);
 
@@ -2210,5 +1782,4 @@ window.clearRoute = clearRoute;
 window.closeSidebar = closeSidebar;
 window.closeBranchCashPanel = closeBranchCashPanel;
 window.openBranchCashPanelByCode = openBranchCashPanelByCode;
-window.showBaselinePanel = showBaselinePanel;
 window.selectAtm = selectAtm;

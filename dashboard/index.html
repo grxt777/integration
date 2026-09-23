@@ -238,6 +238,12 @@
         <p>Swagger UI со всеми эндпоинтами обоих модулей: ATM, филиалы, инкассация, кассиры.</p>
         <div class="go">Открыть /docs →</div>
       </a>
+      <a class="card" href="/dashboard/atm-monitor.html" id="atm-monitor-card">
+        <div class="icon" style="background:linear-gradient(135deg,#0ea5e9,#38bdf8)">📡</div>
+        <h3>atm_monitor <span id="am-dot" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#94a3b8;margin-left:4px;vertical-align:middle"></span></h3>
+        <p id="am-desc">Проверка подключения…</p>
+        <div class="go" id="am-detail">Открыть менеджер банкоматов →</div>
+      </a>
     </div>
   </div>
 
@@ -275,6 +281,42 @@
         document.getElementById('s-cashiers').textContent = '0';
       }
     })();
+
+    // Статус сборщика atm_monitor (реальные данные BTech, раз в час) —
+    // отдельный виджет, чтобы было видно, жив ли пайплайн, не заходя на карту.
+    // Сам виджет опрашивает наш /api раз в минуту (не BTech напрямую) — так
+    // кружок и текст обновляются сами, без ручного F5 на главной странице.
+    async function loadAtmMonitorStatus() {
+      const dot = document.getElementById('am-dot');
+      const desc = document.getElementById('am-desc');
+      const detail = document.getElementById('am-detail');
+      if (!dot) return;
+
+      // detail — это ссылка "Открыть →" (как у других карточек), её текст не трогаем;
+      // время последнего опроса добавляем в desc, под основной строкой статуса.
+      const data = await safeJson('/api/atm-monitor/status');
+      if (!data || !data.connected) {
+        dot.style.background = '#ef4444';
+        desc.textContent = 'Не подключён — сборщик не запущен: задайте AUTH_USERNAME/AUTH_PASSWORD в .env или дождитесь первого опроса.';
+        return;
+      }
+
+      const ok = data.status === 'success';
+      const finished = data.finished_at ? new Date(data.finished_at) : null;
+      const ageMin = finished ? Math.round((Date.now() - finished.getTime()) / 60000) : null;
+      const stale = ageMin != null && ageMin > 90; // почасовой опрос — больше 1.5ч без обновления подозрительно
+
+      dot.style.background = (ok && !stale) ? '#22c55e' : '#ef4444';
+      let text = ok
+        ? `Последний опрос: ${nf.format(data.atm_count || 0)} ATM` + (ageMin != null ? `, ${ageMin} мин назад` : '')
+        : `Последний опрос завершился с ошибкой${data.error ? ': ' + data.error : ''}`;
+      if (stale) text += ' — давно не обновлялось';
+      if (finished) text += ` (${finished.toLocaleString('ru-RU')})`;
+      desc.textContent = text;
+    }
+    loadAtmMonitorStatus();
+    setInterval(loadAtmMonitorStatus, 60000); // авто-обновление раз в минуту
   </script>
+<script src="/dashboard/js/auth-nav.js"></script>
 </body>
 </html>

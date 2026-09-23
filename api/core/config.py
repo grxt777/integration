@@ -9,6 +9,7 @@
 """
 
 import os
+import secrets
 from pathlib import Path
 
 # ── Пути ────────────────────────────────────────────────────
@@ -29,3 +30,15 @@ DEFAULT_CAPACITY  = int(os.getenv("DEFAULT_CAPACITY", "400000000"))  # ёмко�
 DEPOT = {"lat": 41.3111, "lon": 69.2797, "name": "Центральный депо (Ташкент)"}
 ROAD_FACTOR = 1.35      # коэффициент дорожной сети к прямому расстоянию
 AVG_SPEED_KMH = 30      # средняя скорость инкассаторской машины
+
+# ── Сессии / авторизация ─────────────────────────────────────
+# Подписывает cookie сессии (see api/main.py SessionMiddleware). Без своего
+# SECRET_KEY в .env генерится случайный при каждом запуске — тогда после
+# каждого перезапуска сервера все сессии слетают (заново логиниться).
+SECRET_KEY = os.getenv("SECRET_KEY") or secrets.token_hex(32)
+if not os.getenv("SECRET_KEY"):
+    import logging
+    logging.getLogger(__name__).warning(
+        "SECRET_KEY не задан в .env — сгенерирован временный, сессии слетят при перезапуске сервера. "
+        "Для продакшена задайте свой SECRET_KEY в .env."
+    )

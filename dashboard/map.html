@@ -37,7 +37,7 @@
     <a href="/dashboard/import.html"><i data-lucide="file-spreadsheet" class="icon-inline"></i> Импорт реестра</a>
     <a href="/dashboard/cashiers.html"><i data-lucide="users-round" class="icon-inline"></i> Кассиры</a>
   </nav>
-  <span class="time-label">Симуляция:&nbsp;</span>
+  <span class="time-label">Обновлено:&nbsp;</span>
   <span id="sim-time">—</span>
 </header>
 
@@ -89,21 +89,6 @@
     <span class="stat-label" style="color:#d97706">Кассеты нужны</span>
     <span class="stat-value" id="s-cassette" style="color:#fbbf24">—</span>
   </div>
-  <div class="stat-box" style="border-left:2px solid #10b981;cursor:pointer" onclick="showBaselinePanel()" title="Нажмите для сравнения ML vs метод банка">
-    <div class="kpi-icon"><i data-lucide="trending-up"></i></div>
-    <span class="stat-label" style="color:#059669">ML экономит</span>
-    <span class="stat-value" id="s-ml-save" style="color:#34d399">—</span>
-  </div>
-</div>
-
-<!-- Baseline vs ML сравнение -->
-<div id="baseline-panel" style="display:none;background:#fff;border:1px solid #e5eaf3;border-radius:20px;padding:14px;margin:12px 16px 0;font-size:12px">
-  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-    <span style="font-weight:800;color:#111827"><i data-lucide="bar-chart-3" class="icon-inline"></i>Сравнение методов: Банк vs ML</span>
-    <button onclick="document.getElementById('baseline-panel').style.display='none'"
-      style="background:transparent;border:none;color:#667085;cursor:pointer;font-size:16px"><i data-lucide="x"></i></button>
-  </div>
-  <div id="baseline-content" style="color:#667085">Загрузка...</div>
 </div>
 
 <div class="main">
@@ -282,6 +267,7 @@
   </div>
 </div>
 
-<script src="/dashboard/js/map-app.js?v=icons3"></script>
+<script src="/dashboard/js/map-app.js?v=live2"></script>
+<script src="/dashboard/js/auth-nav.js"></script>
 </body>
 </html>

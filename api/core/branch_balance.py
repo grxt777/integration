@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -290,6 +291,26 @@ def init_branch_balance_tables() -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_branch_bal_match ON branch_balances(matched_local_code)"
         )
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS branch_balance_history (
+                id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                snapshot_date      TEXT NOT NULL,
+                bxm_code           TEXT,
+                branch_name        TEXT,
+                matched_local_code TEXT,
+                balance_uzs        REAL,
+                limit_uzs          REAL,
+                usd_amount         REAL,
+                is_mock            INTEGER NOT NULL DEFAULT 1,
+                created_at         TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_branch_bal_hist_branch ON branch_balance_history(matched_local_code, snapshot_date)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_branch_bal_hist_date ON branch_balance_history(snapshot_date)"
+        )
 
 
 def _norm_name(s: str) -> str:
@@ -328,8 +349,13 @@ def clear_branch_balances() -> int:
 
 
 def replace_branch_balances(records: List[Dict[str, Any]]) -> Dict[str, int]:
-    """Eski qoldiqlarni o'chirib, yangilarini yozadi va faqat BXM kodi bo'yicha bog'laydi."""
+    """Eski qoldiqlarni o'chirib, yangilarini yozadi va faqat BXM kodi bo'yicha bog'laydi.
+
+    Har bir yuklashda joriy qoldiq real tarix jadvaliga (branch_balance_history,
+    is_mock=0) ham yoziladi — vaqt o'tib, real Excel yuklashlar tarixi to'planadi
+    va shu asosida prognoz (get_all_branch_forecasts) qurilishi mumkin bo'ladi."""
     init_branch_balance_tables()
+    today = datetime.utcnow().date().isoformat()
     with _connect() as conn:
         branches = [dict(r) for r in conn.execute("SELECT local_code, address, region FROM branches").fetchall()]
         by_code = {str(b["local_code"]).strip(): b for b in branches if b.get("local_code")}
@@ -363,6 +389,29 @@ def replace_branch_balances(records: List[Dict[str, Any]]) -> Dict[str, int]:
                     method,
                 ),
             )
+
+            if local:
+                usd_amount = (rec.get("currencies") or {}).get("840")
+                conn.execute(
+                    "DELETE FROM branch_balance_history WHERE snapshot_date = ? AND matched_local_code = ?",
+                    (today, local),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO branch_balance_history
+                        (snapshot_date, bxm_code, branch_name, matched_local_code, balance_uzs, limit_uzs, usd_amount, is_mock)
+                    VALUES (?,?,?,?,?,?,?,0)
+                    """,
+                    (
+                        today,
+                        rec.get("bxm_code"),
+                        rec.get("branch_name"),
+                        local,
+                        rec.get("balance_uzs"),
+                        rec.get("limit_uzs"),
+                        usd_amount,
+                    ),
+                )
     return {
         "saved": len(records),
         "matched_to_branches": matched,
@@ -619,3 +668,96 @@ def branch_cash_analytics() -> Dict[str, Any]:
             "sum_by_region_uzs": region_uzs,
         },
     }
+
+
+def get_branch_balance_history(local_code: Optional[str] = None) -> List[Dict[str, Any]]:
+    init_branch_balance_tables()
+    with _connect() as conn:
+        if local_code:
+            rows = conn.execute(
+                """SELECT snapshot_date, bxm_code, branch_name, matched_local_code, balance_uzs, limit_uzs, usd_amount, is_mock
+                   FROM branch_balance_history WHERE matched_local_code = ? ORDER BY snapshot_date""",
+                (local_code,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """SELECT snapshot_date, bxm_code, branch_name, matched_local_code, balance_uzs, limit_uzs, usd_amount, is_mock
+                   FROM branch_balance_history ORDER BY matched_local_code, snapshot_date"""
+            ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def _linreg(xs: List[float], ys: List[float]) -> Tuple[float, float]:
+    """Eng kichik kvadratlar usuli bilan chiziqli trend: (slope, intercept)."""
+    n = len(xs)
+    if n < 2:
+        return 0.0, (ys[0] if ys else 0.0)
+    mean_x = sum(xs) / n
+    mean_y = sum(ys) / n
+    den = sum((x - mean_x) ** 2 for x in xs)
+    if den == 0:
+        return 0.0, mean_y
+    num = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys))
+    slope = num / den
+    intercept = mean_y - slope * mean_x
+    return slope, intercept
+
+
+def get_all_branch_forecasts(horizon_days: int = 30) -> Dict[str, Dict[str, Any]]:
+    """Har bir filial uchun tarix (mock yoki haqiqiy) asosida keyingi oy uchun oddiy chiziqli prognoz.
+    Limitni qisqartirish imkoniyatini ko'rsatish uchun tavsiya etilgan limit ham hisoblanadi."""
+    init_branch_balance_tables()
+    with _connect() as conn:
+        rows = [dict(r) for r in conn.execute(
+            """SELECT snapshot_date, matched_local_code, balance_uzs, limit_uzs, is_mock
+               FROM branch_balance_history
+               WHERE matched_local_code IS NOT NULL
+               ORDER BY matched_local_code, snapshot_date"""
+        ).fetchall()]
+
+    by_branch: Dict[str, List[Dict[str, Any]]] = {}
+    for r in rows:
+        by_branch.setdefault(r["matched_local_code"], []).append(r)
+
+    out: Dict[str, Dict[str, Any]] = {}
+    for code, hist in by_branch.items():
+        points = [(i, h["balance_uzs"]) for i, h in enumerate(hist) if h.get("balance_uzs") is not None]
+        if len(points) < 5:
+            continue
+        xs = [p[0] for p in points]
+        ys = [p[1] for p in points]
+        slope, intercept = _linreg(xs, ys)
+
+        avg = sum(ys) / len(ys)
+        mn = min(ys)
+        mx = max(ys)
+        std = (sum((y - avg) ** 2 for y in ys) / len(ys)) ** 0.5
+
+        last_x = xs[-1]
+        projected = [max(0.0, slope * x + intercept) for x in range(last_x + 1, last_x + horizon_days + 1)]
+        forecast_avg = sum(projected) / len(projected) if projected else avg
+        forecast_min = min(projected) if projected else mn
+        forecast_max = max(projected) if projected else mx
+
+        current_limit = hist[-1].get("limit_uzs")
+        recommended_limit = round(max(forecast_max, mx) * 1.15, 2)
+        savings = round(current_limit - recommended_limit, 2) if current_limit is not None else None
+
+        trend_pct = round((slope * horizon_days) / avg * 100, 1) if avg else None
+
+        out[code] = {
+            "history_days": len(hist),
+            "avg_uzs": round(avg, 2),
+            "min_uzs": round(mn, 2),
+            "max_uzs": round(mx, 2),
+            "std_uzs": round(std, 2),
+            "trend_pct_per_month": trend_pct,
+            "forecast_next_month_avg_uzs": round(forecast_avg, 2),
+            "forecast_next_month_min_uzs": round(forecast_min, 2),
+            "forecast_next_month_max_uzs": round(forecast_max, 2),
+            "current_limit_uzs": current_limit,
+            "recommended_limit_uzs": recommended_limit,
+            "potential_savings_uzs": savings,
+            "is_mock": bool(hist[-1].get("is_mock", 1)),
+        }
+    return out

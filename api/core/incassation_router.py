@@ -17,7 +17,7 @@ from datetime import date, datetime, timedelta, timezone
 from math import asin, cos, radians, sin, sqrt
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from .config import AVG_SPEED_KMH, DEFAULT_CAPACITY, LOW_CASH_PCT, ROAD_FACTOR, WARNING_CASH_PCT
+from .config import AVG_SPEED_KMH, DEFAULT_CAPACITY, LOW_CASH_PCT, ROAD_FACTOR
 
 log = logging.getLogger(__name__)
 OSRM_BASE = os.getenv("OSRM_URL", "https://router.project-osrm.org").rstrip("/")
@@ -515,34 +515,6 @@ def build_regional_routes(
         "total_dist_km": round(sum(c["distance_km"] for c in cars), 2),
         "est_time_min": sum(c["est_time_min"] for c in cars),
     }
-
-
-def apply_live_states(atms: List[Dict[str, Any]], states: Sequence[Dict[str, Any]]) -> None:
-    """Overlay live/simulation balances onto ATM rows (in-memory)."""
-    by_id = {str(s.get("terminal_id")): s for s in states if s.get("terminal_id")}
-    for atm in atms:
-        st = by_id.get(str(atm.get("terminal_id")))
-        if not st:
-            continue
-        cap = atm.get("capacity") or DEFAULT_CAPACITY
-        if st.get("balance") is not None:
-            try:
-                bal = int(st["balance"])
-            except (TypeError, ValueError):
-                bal = atm.get("balance")
-            atm["balance"] = bal
-            atm["balance_pct"] = round(bal / cap * 100, 1) if cap and bal is not None else None
-        status = st.get("status")
-        if status in ("ok", "warning", "critical", "unknown"):
-            atm["status"] = status
-        elif atm.get("balance") is not None and cap:
-            pct = atm["balance"] / cap
-            if pct < LOW_CASH_PCT:
-                atm["status"] = "critical"
-            elif pct < WARNING_CASH_PCT:
-                atm["status"] = "warning"
-            else:
-                atm["status"] = "ok"
 
 
 def assign_calendar_dates(cars: List[Dict[str, Any]], workday_min: int = 8 * 60) -> None:

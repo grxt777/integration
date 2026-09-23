@@ -13,11 +13,21 @@ cd "$(dirname "$0")"
 
 echo "🚀 Starting Bank Intelligence Platform..."
 
+# Handle macOS Command Line Tools if Xcode license not accepted
+if [ "$(uname)" = "Darwin" ] && [ -d "/Library/Developer/CommandLineTools" ]; then
+  export DEVELOPER_DIR="${DEVELOPER_DIR:-/Library/Developer/CommandLineTools}"
+fi
+
 if [ -f .env ]; then
   set -a
   # shellcheck disable=SC1091
   source .env
   set +a
+fi
+
+if [ -d ".venv" ]; then
+  # shellcheck disable=SC1091
+  source .venv/bin/activate
 fi
 
 APP_PORT="${APP_PORT:-8000}"
@@ -69,6 +79,7 @@ echo "🗄️  База данных: SQLite — ${DB_PATH:-data/bank.db}"
 echo "🌐 Starting FastAPI server on http://localhost:$APP_PORT"
 echo "   Главная:        http://localhost:$APP_PORT/dashboard/index.html"
 echo "   Карта ATM:      http://localhost:$APP_PORT/dashboard/map.html"
+echo "   Менеджер ATM:   http://localhost:$APP_PORT/dashboard/atm-monitor.html  (atm_monitor, встроен)"
 echo "   Кассиры:        http://localhost:$APP_PORT/dashboard/cashiers.html"
 echo "   Swagger:        http://localhost:$APP_PORT/docs"
 echo "================================================"

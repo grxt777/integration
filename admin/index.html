@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Админ-панель — Bank Intelligence Platform</title>
+<style>
+  :root {
+    --bg: #f6f8fb;
+    --primary: #2563eb;
+    --primary-2: #1d4ed8;
+    --text: #0f172a;
+    --muted: #64748b;
+    --border: #e2e8f0;
+    --danger: #dc2626;
+    --danger-bg: #fef2f2;
+    --success: #16a34a;
+    --surface: #ffffff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: linear-gradient(180deg, #fbfdff 0%, var(--bg) 42%, #eef3fb 100%);
+    color: var(--text);
+    min-height: 100vh;
+  }
+  header {
+    display: flex; align-items: center; gap: 14px;
+    padding: 16px 28px; background: #fff; border-bottom: 1px solid var(--border);
+  }
+  header h1 { font-size: 17px; margin: 0; }
+  header .badge {
+    background: linear-gradient(135deg, var(--primary), #60a5fa); color: #fff;
+    font-size: 11px; font-weight: 800; padding: 4px 10px; border-radius: 999px;
+  }
+  header .spacer { flex: 1; }
+  header a, header span.who { font-size: 13px; color: var(--muted); text-decoration: none; }
+  header a { color: var(--primary); font-weight: 700; }
+  main { max-width: 980px; margin: 0 auto; padding: 24px 20px 60px; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 18px; }
+  .tab {
+    padding: 9px 16px; border-radius: 10px; border: 1px solid var(--border);
+    background: #fff; color: var(--muted); font-weight: 700; font-size: 13px; cursor: pointer;
+  }
+  .tab.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+  .panel { display: none; }
+  .panel.active { display: block; }
+  .toolbar { display: flex; justify-content: flex-end; margin-bottom: 12px; }
+  .btn {
+    padding: 9px 14px; border-radius: 10px; border: 0; font-weight: 700; font-size: 13px; cursor: pointer;
+  }
+  .btn-primary { background: linear-gradient(135deg, var(--primary), var(--primary-2)); color: #fff; }
+  .btn-ghost { background: #fff; border: 1px solid var(--border); color: var(--text); }
+  .btn-danger { background: var(--danger-bg); color: var(--danger); border: 1px solid #fecaca; }
+  .btn-sm { padding: 5px 10px; font-size: 12px; }
+  table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 14px; overflow: hidden; box-shadow: 0 8px 24px rgba(15,23,42,.05); }
+  th, td { text-align: left; padding: 11px 14px; font-size: 13px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; background: #f8fafc; }
+  tr:last-child td { border-bottom: none; }
+  .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+  .pill-ok { background: #ecfdf5; color: var(--success); }
+  .pill-off { background: #f1f5f9; color: var(--muted); }
+  .pages-list { display: flex; flex-wrap: wrap; gap: 4px; }
+  .page-chip { background: #eff6ff; color: var(--primary-2); font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; }
+  .actions { display: flex; gap: 6px; }
+
+  .overlay {
+    display: none; position: fixed; inset: 0; background: rgba(15,23,42,.45);
+    align-items: center; justify-content: center; z-index: 50;
+  }
+  .overlay.open { display: flex; }
+  .modal {
+    width: 380px; background: #fff; border-radius: 16px; padding: 22px;
+    box-shadow: 0 30px 60px rgba(15,23,42,.25); max-height: 86vh; overflow-y: auto;
+  }
+  .modal h3 { margin: 0 0 16px; font-size: 15px; }
+  .modal label { display: block; font-size: 12px; font-weight: 700; color: var(--muted); margin: 12px 0 5px; }
+  .modal input[type=text], .modal input[type=password], .modal select {
+    width: 100%; padding: 9px 10px; border: 1px solid var(--border); border-radius: 9px; font-size: 13px;
+  }
+  .modal .checks { display: flex; flex-direction: column; gap: 7px; margin-top: 4px; }
+  .modal .checks label { display: flex; align-items: center; gap: 8px; font-weight: 500; color: var(--text); margin: 0; font-size: 13px; }
+  .modal .row-actions { display: flex; gap: 8px; margin-top: 20px; justify-content: flex-end; }
+  .hint { font-size: 11px; color: var(--muted); margin-top: 4px; }
+  .msg { display: none; margin-bottom: 14px; padding: 9px 12px; border-radius: 10px; font-size: 12.5px; font-weight: 600; }
+  .msg.error { background: var(--danger-bg); color: var(--danger); border: 1px solid #fecaca; }
+  .msg.ok { background: #ecfdf5; color: var(--success); border: 1px solid #bbf7d0; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="badge">ADMIN</div>
+  <h1>Пользователи и роли</h1>
+  <div class="spacer"></div>
+  <span class="who" id="who">—</span>
+  <a href="/dashboard/index.html">Дашборд</a>
+  <a href="#" id="logout-link">Выйти</a>
+</header>
+
+<main>
+  <div class="tabs">
+    <div class="tab active" data-tab="users">Пользователи</div>
+    <div class="tab" data-tab="roles">Роли</div>
+  </div>
+
+  <div class="msg" id="msg"></div>
+
+  <div class="panel active" id="panel-users">
+    <div class="toolbar"><button class="btn btn-primary" id="btn-new-user">+ Новый пользователь</button></div>
+    <table>
+      <thead><tr><th>Логин</th><th>ФИО</th><th>Роль</th><th>Статус</th><th></th></tr></thead>
+      <tbody id="users-body"></tbody>
+    </table>
+  </div>
+
+  <div class="panel" id="panel-roles">
+    <div class="toolbar"><button class="btn btn-primary" id="btn-new-role">+ Новая роль</button></div>
+    <table>
+      <thead><tr><th>Имя</th><th>Название</th><th>Доступные страницы</th><th></th></tr></thead>
+      <tbody id="roles-body"></tbody>
+    </table>
+  </div>
+</main>
+
+<div class="overlay" id="overlay">
+  <div class="modal" id="modal-body"></div>
+</div>
+
+<script src="/admin/js/admin.js"></script>
+</body>
+</html>

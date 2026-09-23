@@ -90,6 +90,20 @@
     .kpi .v { font-size: clamp(16px, 1.8vw, 20px); font-weight: 850; margin-top: 8px; line-height: 1.2; word-break: break-word; }
     .kpi .h { font-size: 11px; color: var(--muted); margin-top: 6px; }
 
+    .kpi.kpi-highlight {
+      position: relative;
+      border: 1px solid transparent;
+      background:
+        linear-gradient(var(--surface), var(--surface)) padding-box,
+        linear-gradient(90deg, #0d9488, #2dd4bf, #15803d, #0d9488) border-box;
+      background-size: 300% 300%, 300% 300%;
+      animation: kpi-border-flow 4s linear infinite;
+    }
+    @keyframes kpi-border-flow {
+      0% { background-position: 0% 0%; }
+      100% { background-position: 300% 0%; }
+    }
+
     .ccy-panel {
       background: var(--surface);
       border: 1px solid var(--border);
@@ -190,17 +204,17 @@
 
   <div class="kpis" id="kpis"></div>
 
-  <div class="card">
-    <h3><i data-lucide="banknote" style="width:16px;height:16px"></i> SQB kurslari (xarid / sotuv)</h3>
-    <div class="scroll" id="ratesTable"></div>
-  </div>
-
   <div class="ccy-panel">
     <div class="section-title">
       <i data-lucide="coins" style="width:16px;height:16px"></i>
       Валюты · SQB xarid
     </div>
     <div class="ccy-grid" id="ccyGrid"></div>
+  </div>
+
+  <div class="card">
+    <h3><i data-lucide="banknote" style="width:16px;height:16px"></i> SQB kurslari (xarid / sotuv)</h3>
+    <div class="scroll" id="ratesTable"></div>
   </div>
 
   <div class="grid-2">
@@ -266,8 +280,14 @@
   function render(data) {
     const o = data.overall || {};
     const xr = data.exchange_rates || {};
+    const usdRate = (o.currencies || []).find(c => c.code === 'USD')?.rate_uzs || null;
 
     document.getElementById('kpis').innerHTML = `
+      <div class="kpi kpi-highlight">
+        <div class="l">Всего сўм (с конвертацией)</div>
+        <div class="v" style="color:#0d9488">${fmt(o.grand_total_uzs)}</div>
+        <div class="h">${o.branches || 0} филиалов · вся валюта по курсу${usdRate ? ` · <span style="font-size:14px;font-weight:800;color:#15803d">≈ $${fmt(o.grand_total_uzs / usdRate, 0)}</span>` : ''}</div>
+      </div>
       <div class="kpi">
         <div class="l">Всего сўм</div>
         <div class="v" style="color:#14532d">${fmt(o.balance_uzs)}</div>
@@ -481,5 +501,6 @@
 
   main();
 </script>
+<script src="/dashboard/js/auth-nav.js"></script>
 </body>
 </html>

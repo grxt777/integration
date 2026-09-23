@@ -50,15 +50,20 @@ from typing import Any, Dict, List, Optional
 
 # Гарантируем, что каталог api/ в PYTHONPATH (модули импортируются как core.*)
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # корень проекта: пакет atm_monitor
 
 import uvicorn
-from fastapi import Body, FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import Body, Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.middleware.sessions import SessionMiddleware
 
-from core.config import BASE_DIR
+import atm_monitor.api as atm_monitor_api
+import atm_monitor.scheduler as atm_collector
+from core import atm_live, auth
+from core.config import BASE_DIR, SECRET_KEY
 from core.db import (
     DatabaseUnavailableError,
     bulk_insert_atms,
@@ -84,7 +89,9 @@ from core.branch_balance import (
     balances_by_local_code_map,
     branch_cash_analytics,
     clear_branch_balances,
+    get_all_branch_forecasts,
     get_branch_balance_by_local_code,
+    get_branch_balance_history,
     list_branch_balances,
     parse_branch_balances_xlsx,
     replace_branch_balances,
@@ -94,7 +101,7 @@ from core.sqb_rates import (
     parse_sqb_rates_xlsx,
     replace_sqb_rates,
 )
-from core.incassation_router import apply_live_states, build_regional_routes, hours_to_low_cash, osrm_route_geometry
+from core.incassation_router import build_regional_routes, hours_to_low_cash, osrm_route_geometry
 from core.cashier_analytics import (
     cashier_analytics,
     cashier_detail,
@@ -125,7 +132,9 @@ async def lifespan(app: FastAPI):
         logging.getLogger("uvicorn.error").setLevel(logging.CRITICAL)
         os._exit(1)
     log.info("БД готова. ATM в базе: %d, филиалов: %d", count_atms(), count_branches())
+    atm_collector.start_background()   # atm_monitor: почасовой опрос BTech в фоне
     yield
+    atm_collector.stop_background()
     log.info("Сервер остановлен.")
 
 
@@ -148,9 +157,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(atm_monitor_api.router)
+
 dashboard_dir = BASE_DIR / "dashboard"
 if dashboard_dir.exists():
     app.mount("/dashboard", StaticFiles(directory=str(dashboard_dir), html=True), name="dashboard")
+
+admin_dir = BASE_DIR / "admin"
+if admin_dir.exists():
+    app.mount("/admin", StaticFiles(directory=str(admin_dir), html=True), name="admin")
 
 
 @app.get("/", include_in_schema=False)
@@ -166,6 +181,217 @@ async def health():
         "branches": count_branches(),
         "modules": ["atm-monitor", "cashier-intelligence"],
     }
+
+
+@app.get("/api/atm-monitor/status", summary="Статус сборщика atm_monitor (последний опрос BTech)")
+async def atm_monitor_status():
+    return atm_live.collector_status()
+
+
+# ═══════════════════════════════════════════════════════════
+# АВТОРИЗАЦИЯ / РОЛИ / ДОСТУПЫ
+# ═══════════════════════════════════════════════════════════
+
+def _current_user(request: Request) -> Optional[Dict[str, Any]]:
+    uid = request.session.get("user_id")
+    if not uid:
+        return None
+    user = auth.get_user_by_id(uid)
+    if not user or not user["is_active"]:
+        return None
+    return user
+
+
+def _public_user(user: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "username": user["username"],
+        "full_name": user["full_name"],
+        "role_name": user["role_name"],
+        "role_label": user["role_label"],
+        "is_admin": user["is_admin"],
+        "pages": user["pages"],
+    }
+
+
+def require_admin(request: Request) -> Dict[str, Any]:
+    user = _current_user(request)
+    if not user:
+        raise HTTPException(401, "Не авторизован")
+    if not user["is_admin"]:
+        raise HTTPException(403, "Требуются права администратора")
+    return user
+
+
+@app.middleware("http")
+async def auth_gate(request: Request, call_next):
+    """Один гейт перед всем приложением — до любой страницы и любого API-ответа.
+
+    Порядок регистрации middleware важен: SessionMiddleware добавлен НИЖЕ по
+    файлу (после этого декоратора), поэтому оборачивает auth_gate снаружи —
+    request.session уже заполнен из подписанной cookie к моменту, когда этот
+    код его читает (Starlette оборачивает в обратном порядке регистрации)."""
+    path = request.url.path
+
+    if path in auth.PUBLIC_PATHS:
+        return await call_next(request)
+
+    is_api = path.startswith("/api/")
+    user = _current_user(request)
+
+    if not user:
+        if is_api:
+            return JSONResponse({"detail": "Не авторизован"}, status_code=401)
+        return RedirectResponse(url=f"/dashboard/login.html?next={path}", status_code=303)
+
+    if path.startswith("/admin"):
+        if not user["is_admin"]:
+            if is_api:
+                return JSONResponse({"detail": "Доступ запрещён"}, status_code=403)
+            return RedirectResponse(url="/dashboard/index.html?denied=1", status_code=303)
+        return await call_next(request)
+
+    if user["is_admin"] or path in auth.FREE_HTML_PATHS:
+        return await call_next(request)
+
+    page_key = auth.resolve_page_key(path)
+    if page_key is None:
+        # Не размечено (например статический .js/.css) — реальные данные
+        # защищены на уровне /api/*, отдачу самого файла не гейтим отдельно.
+        return await call_next(request)
+
+    if page_key in (user.get("pages") or []):
+        return await call_next(request)
+
+    if is_api:
+        return JSONResponse({"detail": "Доступ запрещён"}, status_code=403)
+    return RedirectResponse(url="/dashboard/index.html?denied=1", status_code=303)
+
+
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=SECRET_KEY,
+    session_cookie="bip_session",
+    max_age=60 * 60 * 24 * 7,  # 7 дней
+)
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+@app.post("/api/auth/login", summary="Вход")
+async def login(payload: LoginRequest, request: Request):
+    user = auth.authenticate(payload.username, payload.password)
+    if not user:
+        raise HTTPException(401, "Неверный логин или пароль")
+    request.session.clear()
+    request.session["user_id"] = user["id"]
+    return {"ok": True, "user": _public_user(user)}
+
+
+@app.post("/api/auth/logout", summary="Выход")
+async def logout(request: Request):
+    request.session.clear()
+    return {"ok": True}
+
+
+@app.get("/api/auth/me", summary="Текущий пользователь")
+async def me(request: Request):
+    user = _current_user(request)
+    if not user:
+        raise HTTPException(401, "Не авторизован")
+    return _public_user(user)
+
+
+@app.get("/api/admin/pages", summary="Функциональные блоки для чекбоксов ролей")
+async def admin_list_pages(_: Dict[str, Any] = Depends(require_admin)):
+    return {"pages": [{"key": p["key"], "label": p["label"]} for p in auth.PAGE_DEFINITIONS]}
+
+
+@app.get("/api/admin/users", summary="Список пользователей")
+async def admin_list_users(_: Dict[str, Any] = Depends(require_admin)):
+    return {"users": auth.list_users()}
+
+
+class CreateUserRequest(BaseModel):
+    username: str
+    password: str
+    full_name: Optional[str] = None
+    role_id: int
+
+
+@app.post("/api/admin/users", summary="Создать пользователя")
+async def admin_create_user(payload: CreateUserRequest, _: Dict[str, Any] = Depends(require_admin)):
+    try:
+        return auth.create_user(payload.username, payload.password, payload.full_name, payload.role_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+class UpdateUserRequest(BaseModel):
+    full_name: Optional[str] = None
+    role_id: Optional[int] = None
+    is_active: Optional[bool] = None
+    new_password: Optional[str] = None
+
+
+@app.patch("/api/admin/users/{user_id}", summary="Изменить пользователя")
+async def admin_update_user(user_id: int, payload: UpdateUserRequest, _: Dict[str, Any] = Depends(require_admin)):
+    try:
+        return auth.update_user(user_id, payload.full_name, payload.role_id, payload.is_active, payload.new_password)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.delete("/api/admin/users/{user_id}", summary="Удалить пользователя")
+async def admin_delete_user(user_id: int, _: Dict[str, Any] = Depends(require_admin)):
+    try:
+        auth.delete_user(user_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True}
+
+
+@app.get("/api/admin/roles", summary="Список ролей")
+async def admin_list_roles(_: Dict[str, Any] = Depends(require_admin)):
+    return {"roles": auth.list_roles()}
+
+
+class CreateRoleRequest(BaseModel):
+    name: str
+    label: str
+    pages: List[str] = []
+
+
+@app.post("/api/admin/roles", summary="Создать роль")
+async def admin_create_role(payload: CreateRoleRequest, _: Dict[str, Any] = Depends(require_admin)):
+    try:
+        return auth.create_role(payload.name, payload.label, payload.pages)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+class UpdateRoleRequest(BaseModel):
+    label: Optional[str] = None
+    pages: Optional[List[str]] = None
+
+
+@app.patch("/api/admin/roles/{role_id}", summary="Изменить роль")
+async def admin_update_role(role_id: int, payload: UpdateRoleRequest, _: Dict[str, Any] = Depends(require_admin)):
+    try:
+        return auth.update_role(role_id, payload.label, payload.pages)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.delete("/api/admin/roles/{role_id}", summary="Удалить роль")
+async def admin_delete_role(role_id: int, _: Dict[str, Any] = Depends(require_admin)):
+    try:
+        auth.delete_role(role_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True}
 
 
 # ═══════════════════════════════════════════════════════════
@@ -210,15 +436,35 @@ async def get_atm_detail(terminal_id: str):
 # КАССЕТЫ + BASELINE
 # ═══════════════════════════════════════════════════════════
 
+CASSETTE_MAX_COUNT = 2000  # физический потолок купюр на одну кассету (оценка без реальных данных)
+
+
 @app.get("/api/atms/{terminal_id}/cassettes", summary="Кассеты + рекомендация по загрузке")
 async def get_atm_cassettes(terminal_id: str):
     """
-    Кассеты — логическая модель: текущий остаток разбивается на 4 номинала
-    (10/50/100/200 тыс. UZS) пропорционально доле в обороте.
+    Если ATM опрашивается сборщиком atm_monitor — отдаём реальные кассеты
+    (номинал/количество/статус OK-LOW-MISSING на момент последнего опроса).
+    Иначе — оценка: текущий остаток разбивается на 4 номинала пропорционально
+    типичной доле в обороте (source="estimated", это не измерение).
     """
     atm = get_atm(terminal_id)
     if not atm:
         raise HTTPException(404, f"ATM {terminal_id!r} не найден")
+
+    # get_atm() уже подмешал реальные кассеты (см. core.db._apply_live_state);
+    # отдельный запрос к atm_monitor тут не нужен.
+    live_cassettes = atm.get("cassettes") or []
+    if live_cassettes:
+        return {
+            "atm_id": terminal_id,
+            "address": atm.get("address"),
+            "region": atm.get("region"),
+            "branch": atm.get("branch"),
+            "current_balance": atm.get("balance"),
+            "balance_polled_at": atm.get("balance_polled_at"),
+            "source": "live",
+            "cassettes": live_cassettes,
+        }
 
     balance = atm.get("balance")
     capacity = atm.get("capacity") or 400_000_000
@@ -231,10 +477,11 @@ async def get_atm_cassettes(terminal_id: str):
             "branch": atm.get("branch"),
             "current_balance": None,
             "capacity": capacity,
+            "source": "estimated",
             "cassettes": {
                 "denominations": [10_000, 50_000, 100_000, 200_000],
                 "by_denom": {
-                    str(d): {"count": 0, "balance": 0, "fill_pct": 0}
+                    str(d): {"count": 0, "balance": 0, "capacity": CASSETTE_MAX_COUNT, "fill_pct": 0}
                     for d in (10_000, 50_000, 100_000, 200_000)
                 },
                 "total_balance": 0,
@@ -244,19 +491,25 @@ async def get_atm_cassettes(terminal_id: str):
             "comment": "Баланс не загружен. Обновите через /api/atms/{id}/balance.",
         }
 
+    # Оценка (нет реальных кассет от atm_monitor): раскладываем известный остаток
+    # по 4 номиналам пропорционально типичной доле в обороте, но не больше
+    # CASSETTE_MAX_COUNT купюр в одной кассете — это физический потолок реальной
+    # кассеты. Итоговый баланс кассет — не сам исходный остаток, а честная сумма
+    # «количество купюр × номинал» после этого ограничения.
     share = {10_000: 0.10, 50_000: 0.45, 100_000: 0.30, 200_000: 0.15}
     by_denom: Dict[str, Dict[str, Any]] = {}
     for d, s in share.items():
         alloc = int(balance * s)
-        count = alloc // d
+        count = min(alloc // d, CASSETTE_MAX_COUNT)
         by_denom[str(d)] = {
             "count": int(count),
             "balance": int(count * d),
-            "fill_pct": round(count * d / (capacity * s) * 100, 1) if s and capacity else 0,
+            "capacity": CASSETTE_MAX_COUNT,
+            "fill_pct": round(count / CASSETTE_MAX_COUNT * 100, 1),
         }
 
     total_cassette_value = sum(int(c["balance"]) for c in by_denom.values())
-    value_to_fill = max(0, capacity - balance)
+    value_to_fill = max(0, capacity - total_cassette_value)
 
     return {
         "atm_id": terminal_id,
@@ -267,15 +520,31 @@ async def get_atm_cassettes(terminal_id: str):
         "capacity": capacity,
         "balance_pct": atm.get("balance_pct"),
         "status": atm.get("status"),
+        "source": "estimated",
         "cassettes": {
             "denominations": [10_000, 50_000, 100_000, 200_000],
             "by_denom": by_denom,
             "total_balance": total_cassette_value,
-            "total_fill_pct": round(balance / capacity * 100, 1) if capacity else 0,
+            "total_fill_pct": round(total_cassette_value / capacity * 100, 1) if capacity else 0,
             "value_to_fill": value_to_fill,
         },
         "refill_needed": value_to_fill,
     }
+
+
+@app.get("/api/atms/{terminal_id}/history", summary="Реальная история остатка ATM (для прогноза)")
+async def get_atm_history(
+    terminal_id: str,
+    days: int = Query(30, ge=1, le=180, description="Сколько дней истории отдать"),
+):
+    """
+    Реальный почасовой ряд остатка UZS из atm_monitor (сборщик monitoring.btech.uz).
+    Пусто, если этот ATM не опрашивается сборщиком или он сейчас недоступен.
+    """
+    atm = get_atm(terminal_id)
+    live_tid = (atm.get("live_tid") if atm else None) or terminal_id
+    history = atm_live.balance_history_by_tid(live_tid, days=days)
+    return {"terminal_id": terminal_id, "days": days, "history": history, "count": len(history)}
 
 
 # ═══════════════════════════════════════════════════════════
@@ -349,10 +618,14 @@ async def get_branches(
     rows = list_branches_full(region=region, incassation=incassation, limit=limit, offset=offset)
     if with_balance:
         bal_map = balances_by_local_code_map()
+        forecasts = get_all_branch_forecasts()
         for b in rows:
             code = str(b.get("local_code") or "")
             if code and code in bal_map:
-                b["cash"] = bal_map[code]
+                cash = dict(bal_map[code])
+                if code in forecasts:
+                    cash["forecast"] = forecasts[code]
+                b["cash"] = cash
     return {
         "branches": rows,
         "count": len(rows),
@@ -405,6 +678,14 @@ async def get_all_branch_balances():
 @app.get("/api/branch-balances/analytics", summary="Сводка кассы: всего и по регионам")
 async def get_branch_cash_analytics():
     return branch_cash_analytics()
+
+
+@app.get("/api/branch-balances/history", summary="История остатков по филиалам (снимок на каждый импорт Excel)")
+async def get_branch_balance_history_endpoint(
+    local_code: Optional[str] = Query(None, description="Фильтр по коду филиала"),
+):
+    rows = get_branch_balance_history(local_code)
+    return {"history": rows, "count": len(rows)}
 
 
 @app.get("/api/sqb-rates", summary="SQB xarid/sotuv kurslari")
@@ -623,14 +904,7 @@ async def get_baseline():
 # ИНКАССАЦИЯ
 # ═══════════════════════════════════════════════════════════
 
-class LiveAtmState(BaseModel):
-    terminal_id: str
-    balance: Optional[int] = None
-    status: Optional[str] = None
-
-
 class IncassationRouteRequest(BaseModel):
-    states: List[LiveAtmState] = []
     persist: bool = True
 
 
@@ -643,9 +917,7 @@ async def regional_incassation_route(
     payload: Optional[IncassationRouteRequest] = Body(None),
 ):
     req = payload or IncassationRouteRequest()
-    atms = list_atms(limit=5000)
-    if req.states:
-        apply_live_states(atms, [s.model_dump() for s in req.states])
+    atms = list_atms(limit=5000)  # уже с реальным балансом из atm_monitor, см. core.db
     branches = list_branches_full(incassation=1, limit=5000)
     result = build_regional_routes(
         atms, branches, status,
