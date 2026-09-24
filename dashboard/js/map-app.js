@@ -109,7 +109,7 @@ function zoomToFiltered(filtered) {
   });
   if (points.length > 0) {
     const bounds = L.latLngBounds(points);
-    map.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
+    smoothFitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
   }
 }
 
@@ -181,6 +181,7 @@ function onRegionChange() {
     `;
     container.appendChild(item);
   });
+  updateModalAtmCount();
 }
 
 function updateModalAtmCount() {
@@ -188,6 +189,15 @@ function updateModalAtmCount() {
   const checkedCount = container.querySelectorAll('input[type="checkbox"]:checked').length;
   const totalCount = container.querySelectorAll('input[type="checkbox"]').length;
   document.getElementById('modal-atm-count-val').textContent = `${checkedCount} из ${totalCount}`;
+  const btn = document.getElementById('modal-select-all-btn');
+  if (btn) btn.textContent = totalCount && checkedCount === totalCount ? 'Снять все' : 'Выбрать все';
+}
+
+function toggleAllModalAtms() {
+  const boxes = document.querySelectorAll('#modal-atm-list input[type="checkbox"]');
+  const allChecked = boxes.length && Array.from(boxes).every(cb => cb.checked);
+  boxes.forEach(cb => { cb.checked = !allChecked; });
+  updateModalAtmCount();
 }
 
 function performRegionSearch() {
@@ -235,12 +245,45 @@ function clearRegionFilter() {
 // MAP INIT
 // ═══════════════════════════════════════════════════════════
 
-const map = L.map('map', { zoomControl: true }).setView([41.3510, 69.2900], 14);
+// Рамка Узбекистана (по uzbekistan.geojson) — дальше неё карту не отдаляем и не утаскиваем
+const UZ_BOUNDS = L.latLngBounds([37.18, 55.99], [45.59, 73.15]);
+
+const map = L.map('map', {
+  zoomControl: true,
+  // Плавный зум: дробные уровни, колесо крутит медленнее, без рывков
+  zoomSnap: 0.25,
+  zoomDelta: 0.5,
+  wheelPxPerZoomLevel: 45,
+  wheelDebounceTime: 30,
+  // Мягкое торможение при перетаскивании
+  inertia: true,
+  inertiaDeceleration: 2200,
+  easeLinearity: 0.2,
+  // Не уезжать за пределы страны
+  maxBounds: UZ_BOUNDS.pad(0.25),
+  maxBoundsViscosity: 0.9,
+  maxZoom: 19,
+}).setView([41.3510, 69.2900], 14);
 
 L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
   attribution: '© OpenStreetMap © CARTO',
-  subdomains: 'abcd', maxZoom: 19
+  subdomains: 'abcd', maxZoom: 19,
+  keepBuffer: 4,          // меньше «пустых» плиток при движении
+  updateWhenZooming: false,
 }).addTo(map);
+
+// Максимальное отдаление = весь Узбекистан на экране (пересчёт при изменении окна)
+function fitMinZoomToUzbekistan() {
+  const z = map.getBoundsZoom(UZ_BOUNDS, false, L.point(20, 20));
+  map.setMinZoom(Math.max(4, z));
+}
+fitMinZoomToUzbekistan();
+map.on('resize', fitMinZoomToUzbekistan);
+
+// Плавный перелёт вместо резкого прыжка
+function smoothFitBounds(bounds, opts = {}) {
+  map.flyToBounds(bounds, { duration: 0.9, easeLinearity: 0.25, ...opts });
+}
 
 // Явно показываем, что проект ограничен только Юнусабадским районом.
 // Приоритет: точная граница из GeoJSON, fallback: bbox.
@@ -272,6 +315,23 @@ let countryBorderLayer = null;
 let regionsLayer = null;
 let districtsLayer = null;
 
+// 0. Приглушаем всё за пределами Узбекистана — граница читается и при отдалении
+let outsideMaskLayer = null;
+function addOutsideMask(geo) {
+  const holes = [];
+  (geo.features || [geo]).forEach(f => {
+    const g = f.geometry || f;
+    const polys = g.type === 'Polygon' ? [g.coordinates] : g.type === 'MultiPolygon' ? g.coordinates : [];
+    polys.forEach(poly => holes.push(poly[0].map(([lon, lat]) => [lat, lon])));
+  });
+  if (!holes.length) return;
+  const world = [[-89, -179], [-89, 179], [89, 179], [89, -179]];
+  if (outsideMaskLayer) map.removeLayer(outsideMaskLayer);
+  outsideMaskLayer = L.polygon([world, ...holes], {
+    stroke: false, fillColor: '#f1f5f9', fillOpacity: 0.75, interactive: false,
+  }).addTo(map);
+}
+
 // 1. Граница Узбекистана (жирный контур)
 async function addUzbekistanBorder() {
   try {
@@ -280,6 +340,8 @@ async function addUzbekistanBorder() {
     const geo = await res.json();
 
     if (countryBorderLayer) map.removeLayer(countryBorderLayer);
+
+    addOutsideMask(geo);
 
     countryBorderLayer = L.geoJSON(geo, {
       style: {
@@ -550,7 +612,8 @@ function openBranchCashPanel(branch) {
       <div style="margin-top:14px;padding:12px;border-radius:12px;background:#f8fafc;border:1px solid #e2e8f0;color:#64748b;font-size:13px;line-height:1.45">
         Кассовый остаток для этого филиала не загружен.
         Импорт: <b>Импорт → Остатки филиалов</b>.
-      </div>`;
+      </div>
+      ${equipmentSectionHtml(branch.local_code)}`;
     panel.classList.add('open');
     hydrateIcons();
     return;
@@ -634,6 +697,7 @@ function openBranchCashPanel(branch) {
     <div class="popup-row">Тип: <span style="color:${isInc ? '#7c3aed' : '#64748b'};font-weight:700">
       ${isInc ? 'Для выезда инкассаторов' : 'Обычный филиал'}
     </span></div>
+    ${equipmentSectionHtml(branch.local_code)}
 
     <div class="bcp-card" style="margin-top:12px;background:#f0fdf4;border-color:#bbf7d0">
       <div class="bcp-label" style="color:#15803d">Остаток (сўм)</div>
@@ -710,6 +774,7 @@ async function loadBranches() {
     const data = await res.json();
     const branches = data.branches || [];
     branchesCache = branches;
+    await loadEquipmentData(true);
 
     if (branchesLayer) map.removeLayer(branchesLayer);
     branchesLayer = L.layerGroup();
@@ -743,9 +808,10 @@ async function loadBranches() {
           style="margin-top:10px;width:100%;padding:8px 10px;border:0;border-radius:10px;background:#0d9488;color:#fff;font-weight:800;font-size:12px;cursor:pointer">
           ${cash ? 'Открыть кассу филиала →' : 'Касса не загружена'}
         </button>
+        ${equipmentButtonHtml(b.local_code)}
       `, { maxWidth: 260 });
       marker.on('click', () => {
-        if (cash) openBranchCashPanel(b);
+        if (cash || equipmentByCode[String(b.local_code)]) openBranchCashPanel(b);
       });
       branchesLayer.addLayer(marker);
     });
@@ -848,6 +914,199 @@ async function toggleBranchesLayer() {
     btn.style.borderColor = '';
   }
   hydrateIcons();
+}
+
+
+// ═══════════════════════════════════════════════════════════
+// KASSA JIHOZLARI (кассовая техника по филиалам)
+// ═══════════════════════════════════════════════════════════
+
+let equipmentByCode  = {};
+let equipmentLoaded  = false;
+
+function escHtml(v) {
+  return String(v ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+}
+
+async function loadEquipmentData(silent = false) {
+  try {
+    const res = await fetch(`${API_BASE}/api/cash-equipment/branches`);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    equipmentByCode = {};
+    (data.branches || []).forEach(g => { equipmentByCode[String(g.local_code)] = g; });
+    equipmentLoaded = true;
+    return data;
+  } catch (err) {
+    if (!silent) alert('Не удалось загрузить кассовую технику: ' + (err.message || err));
+    return null;
+  }
+}
+
+// Листы Excel «Kassa jihozlari ro'yxati» → подписи; Mashinka — главное
+const EQUIPMENT_KINDS = {
+  'Mashinka':      'Пул санаш машинкалари',
+  'Detektor':      'Детекторлар',
+  'Termo printer': 'Термо принтерлар',
+  'Multivak':      'Упаковщики Multivac',
+  'Kassa aravasi': 'Касса аравалари',
+  'Plesos':        'Пылесосы',
+};
+const MAIN_KIND = 'Mashinka';
+
+function kindLabel(kind) { return EQUIPMENT_KINDS[kind] || kind || 'Прочее'; }
+
+function groupEquipmentByKind(items) {
+  const out = {};
+  items.forEach(it => { (out[it.kind || ''] = out[it.kind || ''] || []).push(it); });
+  const order = Object.keys(EQUIPMENT_KINDS);
+  return Object.entries(out).sort((a, b) => {
+    const ia = order.indexOf(a[0]), ib = order.indexOf(b[0]);
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+  });
+}
+
+function countByName(items) {
+  const byName = {};
+  items.forEach(it => { const k = it.asset_name || '—'; byName[k] = (byName[k] || 0) + 1; });
+  return Object.entries(byName).sort((a, b) => b[1] - a[1]);
+}
+
+function machineCount(g) { return g.items.filter(it => it.kind === MAIN_KIND).length; }
+
+const REPLACE_STATUS = {
+  written_off: { label: 'Списана — менять',        color: '#b91c1c', bg: '#fef2f2', border: '#fecaca' },
+  soon:        { label: 'Спишется в течение года', color: '#b45309', bg: '#fffbeb', border: '#fde68a' },
+  ok:          { label: 'В норме',                 color: '#15803d', bg: '#f0fdf4', border: '#bbf7d0' },
+  unknown:     { label: 'Нет данных',              color: '#64748b', bg: '#f8fafc', border: '#e2e8f0' },
+};
+
+function wearBarHtml(it) {
+  if (it.wear_pct == null) return '';
+  const st = REPLACE_STATUS[it.replace_status] || REPLACE_STATUS.unknown;
+  return `<div style="margin:6px 0 2px;height:6px;background:#e2e8f0;border-radius:99px;overflow:hidden">
+    <div style="height:100%;width:${Math.min(100, it.wear_pct)}%;background:${st.color}"></div></div>`;
+}
+
+function replaceBadgeHtml(it) {
+  const st = REPLACE_STATUS[it.replace_status] || REPLACE_STATUS.unknown;
+  return `<span style="display:inline-block;padding:2px 7px;border-radius:99px;font-size:10px;font-weight:800;color:${st.color};background:${st.bg};border:1px solid ${st.border}">${st.label}</span>`;
+}
+
+function equipmentSectionHtml(localCode) {
+  const g = equipmentByCode[String(localCode || '')];
+  if (!g) return '';
+  const machines = g.items.filter(it => it.kind === MAIN_KIND);
+  const machineRows = countByName(machines)
+    .map(([n, c]) => `<div class="popup-row">${escHtml(n)}: <span style="font-weight:800">${c}</span></div>`).join('')
+    || '<div class="popup-row" style="color:#94a3b8">Машинок нет</div>';
+  const nOff = machines.filter(it => it.replace_status === 'written_off').length;
+  const nSoon = machines.filter(it => it.replace_status === 'soon').length;
+  const replaceHtml = (nOff || nSoon) ? `
+      <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
+        ${nOff ? `<span style="padding:3px 8px;border-radius:99px;font-size:11px;font-weight:800;color:#b91c1c;background:#fef2f2;border:1px solid #fecaca">Менять: ${nOff}</span>` : ''}
+        ${nSoon ? `<span style="padding:3px 8px;border-radius:99px;font-size:11px;font-weight:800;color:#b45309;background:#fff;border:1px solid #fde68a">В течение года: ${nSoon}</span>` : ''}
+      </div>` : (machines.length ? `<div style="margin-top:8px;font-size:11px;font-weight:800;color:#15803d">✓ Все машинки в норме</div>` : '');
+  const others = groupEquipmentByKind(g.items).filter(([k]) => k !== MAIN_KIND)
+    .map(([k, list]) => `${escHtml(kindLabel(k))}: <b>${list.length}</b>`).join(' · ');
+  return `
+    <div class="bcp-card" style="margin-top:12px;background:#fffbeb;border-color:#fde68a">
+      <div class="bcp-label" style="color:#b45309">Машинки (пул санаш) · ${machines.length} шт.</div>
+      ${machineRows}
+      ${replaceHtml}
+      ${others ? `<div style="margin-top:8px;padding-top:6px;border-top:1px dashed #fde68a;font-size:11px;color:#78350f;line-height:1.5">${others}</div>` : ''}
+      <button onclick="openEquipmentPanelByCode('${escHtml(localCode)}')"
+        style="margin-top:8px;width:100%;padding:7px 10px;border:0;border-radius:10px;background:#d97706;color:#fff;font-weight:800;font-size:12px;cursor:pointer">
+        Подробно (инв. №, даты, суммы) →
+      </button>
+    </div>`;
+}
+
+function equipmentButtonHtml(localCode) {
+  const g = equipmentByCode[String(localCode || '')];
+  if (!g) return '';
+  return `<button onclick="openEquipmentPanelByCode('${escHtml(localCode)}')"
+    style="margin-top:6px;width:100%;padding:8px 10px;border:0;border-radius:10px;background:#d97706;color:#fff;font-weight:800;font-size:12px;cursor:pointer">
+    Машинки: ${machineCount(g)} · вся техника: ${g.count} →
+  </button>`;
+}
+
+function openEquipmentPanelByCode(localCode) {
+  const g = equipmentByCode[String(localCode)];
+  if (g) openEquipmentPanel(g);
+}
+
+function fmtEqDate(iso) {
+  if (!iso) return '—';
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  return m ? `${m[3]}.${m[2]}.${m[1]}` : escHtml(iso);
+}
+
+function openEquipmentPanel(g) {
+  const panel = document.getElementById('branch-cash-panel');
+  const body = document.getElementById('bcp-body');
+  const title = document.getElementById('bcp-title');
+  if (!panel || !body) return;
+  const routeSb = document.getElementById('route-sidebar');
+  if (routeSb) routeSb.classList.remove('open');
+
+  if (title) title.textContent = `Машинки · ${g.unit_name || g.local_code}`;
+
+  const itemCard = it => `
+    <div class="bcp-card" style="margin-top:6px;background:#fff;border-color:${(REPLACE_STATUS[it.replace_status] || REPLACE_STATUS.unknown).border}">
+      <div style="font-size:12px;font-weight:800;color:#78350f">${escHtml(it.asset_name)}</div>
+      <div style="margin-top:4px">${replaceBadgeHtml(it)}</div>
+      ${wearBarHtml(it)}
+      <div class="popup-row">Износ: <span style="font-weight:800">${it.wear_pct != null ? it.wear_pct + '%' : '—'}</span></div>
+      <div class="popup-row">Полное списание: <span style="font-weight:800">${it.replace_status === 'written_off' && it.writeoff_estimated ? 'уже списана' : (it.writeoff_estimated ? '≈ ' : '') + fmtEqDate(it.writeoff_date)}</span></div>
+      <div class="popup-row">В работе: <span>${it.age_years != null ? it.age_years + ' г.' : '—'}</span></div>
+      <div class="popup-row">Инв. №: <span>${escHtml(it.inventory_number || '—')}</span></div>
+      <div class="popup-row">Тоифа: <span>${escHtml(it.category || '—')}</span></div>
+      <div class="popup-row">Балансга олинган: <span>${fmtEqDate(it.balance_date)}</span></div>
+      <div class="popup-row">Фойдаланишга топширилган: <span>${fmtEqDate(it.commissioned_date)}</span></div>
+      <div class="popup-row">Тиклаш қиймати: <span>${fmtBranchMoney(it.restoration_value, 2)}</span></div>
+      <div class="popup-row">Қолдиқ суммаси: <span style="font-weight:800">${fmtBranchMoney(it.residual_value, 2)}</span></div>
+    </div>`;
+
+  const sections = groupEquipmentByKind(g.items).map(([kind, list]) => {
+    const isMain = kind === MAIN_KIND;
+    const summary = countByName(list)
+      .map(([n, c]) => `<tr><td>${escHtml(n)}</td><td style="font-weight:800;text-align:right">${c}</td></tr>`).join('');
+    const residual = list.reduce((a, it) => a + (Number(it.residual_value) || 0), 0);
+    return `
+      <details ${isMain ? 'open' : ''} style="margin-top:12px;border:1px solid ${isMain ? '#f59e0b' : '#e2e8f0'};border-radius:12px;padding:8px 10px;background:${isMain ? '#fffbeb' : '#f8fafc'}">
+        <summary style="cursor:pointer;font-size:12px;font-weight:850;color:${isMain ? '#92400e' : '#334155'}">
+          ${escHtml(kindLabel(kind))} · ${list.length} шт. <span style="font-weight:600;color:#64748b">· қолдиқ ${fmtBranchMoney(residual)}</span>
+          ${list.some(it => it.replace_status === 'written_off') ? `<span style="color:#b91c1c;font-weight:800"> · менять: ${list.filter(it => it.replace_status === 'written_off').length}</span>` : ''}
+          ${list.some(it => it.replace_status === 'soon') ? `<span style="color:#b45309;font-weight:800"> · в теч. года: ${list.filter(it => it.replace_status === 'soon').length}</span>` : ''}
+        </summary>
+        <table style="margin-top:6px"><thead><tr><th>Модель</th><th style="text-align:right">Сони</th></tr></thead><tbody>${summary}</tbody></table>
+        ${list.slice().sort((a, b) => ({ written_off: 0, soon: 1, ok: 2 }[a.replace_status] ?? 3) - ({ written_off: 0, soon: 1, ok: 2 }[b.replace_status] ?? 3)
+            || String(a.writeoff_date || '').localeCompare(String(b.writeoff_date || ''))).map(itemCard).join('')}
+      </details>`;
+  }).join('');
+
+  body.innerHTML = `
+    <div style="font-size:12px;font-weight:800;color:#0f172a;margin-bottom:4px">${escHtml(g.unit_name || g.address || g.local_code)}</div>
+    <div class="popup-row">Локал код: <span>${escHtml(g.local_code)}${g.number ? ' · №' + escHtml(g.number) : ''}</span></div>
+    <div class="popup-row">Регион: <span>${escHtml(g.region || '—')}</span></div>
+
+    <div style="display:flex;gap:8px;margin-top:12px">
+      <div class="bcp-card" style="flex:1;background:#fffbeb;border-color:#fde68a">
+        <div class="bcp-label" style="color:#b45309">Машинки, шт.</div>
+        <div class="bcp-value" style="color:#78350f">${machineCount(g)}</div>
+      </div>
+      <div class="bcp-card" style="flex:1;background:#f8fafc;border-color:#e2e8f0">
+        <div class="bcp-label" style="color:#475569">Вся техника, шт.</div>
+        <div class="bcp-value" style="color:#0f172a">${g.count}</div>
+      </div>
+    </div>
+    <a href="/dashboard/equipment-replacement.html" style="display:block;margin-top:12px;text-align:center;font-size:12px;font-weight:800;color:#b45309;text-decoration:none">План замены по всем филиалам →</a>
+    ${sections}
+  `;
+  panel.classList.add('open');
+  hydrateIcons();
+  if (map && map.closePopup) map.closePopup();
 }
 
 
@@ -1166,7 +1425,7 @@ function selectAtm(id) {
   const st  = atmState[id] || {};
   const pct = Math.round((st.pct || 0) * 100);
 
-  map.setView([atm.lat, atm.lon], 16, { animate: true });
+  map.flyTo([atm.lat, atm.lon], 16, { duration: 0.9, easeLinearity: 0.25 });
 
   const stPop = atmState[id] || {};
 
@@ -1578,7 +1837,7 @@ function renderRegionalRoutes(data) {
     if (gen !== _routeDrawGen) return;
     try { map.invalidateSize(); } catch (_) {}
     if (allPts.length) {
-      map.fitBounds(L.latLngBounds(allPts), { padding: [60, 60], maxZoom: 14 });
+      smoothFitBounds(L.latLngBounds(allPts), { padding: [60, 60], maxZoom: 14 });
     }
   };
   hideLoader();
@@ -1782,4 +2041,6 @@ window.clearRoute = clearRoute;
 window.closeSidebar = closeSidebar;
 window.closeBranchCashPanel = closeBranchCashPanel;
 window.openBranchCashPanelByCode = openBranchCashPanelByCode;
+window.toggleAllModalAtms = toggleAllModalAtms;
+window.openEquipmentPanelByCode = openEquipmentPanelByCode;
 window.selectAtm = selectAtm;

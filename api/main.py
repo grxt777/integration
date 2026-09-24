@@ -21,6 +21,11 @@ Bank Intelligence Platform — FastAPI Backend
     POST  /api/branches/balances/import     → импорт кассовых остатков (отдельный XLSX)
     POST  /api/branches/balances/clear      → очистить кассовые остатки
     GET   /api/branch-balances/analytics    → сводка кассы по регионам
+    POST  /api/cash-equipment/import        → импорт списка кассовой техники (XLSX)
+    POST  /api/cash-equipment/clear         → очистить кассовую технику
+    GET   /api/cash-equipment               → список (фильтр ?local_code=)
+    GET   /api/cash-equipment/branches      → техника, сгруппированная по филиалам
+    GET   /api/cash-equipment/replacement   → план замены (износ, дата списания)
     GET   /api/alerts                       → ATM в critical/warning
     GET   /api/baseline                     → сводный отчёт по остаткам
     POST  /api/routes/incassation           → региональные маршруты инкассации
@@ -95,6 +100,14 @@ from core.branch_balance import (
     list_branch_balances,
     parse_branch_balances_xlsx,
     replace_branch_balances,
+)
+from core.cash_equipment import (
+    cash_equipment_by_branch,
+    equipment_replacement_plan,
+    clear_cash_equipment,
+    list_cash_equipment,
+    parse_cash_equipment_xlsx,
+    replace_cash_equipment,
 )
 from core.sqb_rates import (
     latest_rates,
@@ -222,6 +235,14 @@ def require_admin(request: Request) -> Dict[str, Any]:
     return user
 
 
+def _no_cache(path: str, response):
+    """Страницы/скрипты дашборда браузер должен перепроверять каждый раз,
+    иначе после обновления кода показывается старая закэшированная версия."""
+    if path.startswith("/dashboard/") or path == "/":
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 @app.middleware("http")
 async def auth_gate(request: Request, call_next):
     """Один гейт перед всем приложением — до любой страницы и любого API-ответа.
@@ -251,16 +272,16 @@ async def auth_gate(request: Request, call_next):
         return await call_next(request)
 
     if user["is_admin"] or path in auth.FREE_HTML_PATHS:
-        return await call_next(request)
+        return _no_cache(path, await call_next(request))
 
     page_key = auth.resolve_page_key(path)
     if page_key is None:
         # Не размечено (например статический .js/.css) — реальные данные
         # защищены на уровне /api/*, отдачу самого файла не гейтим отдельно.
-        return await call_next(request)
+        return _no_cache(path, await call_next(request))
 
     if page_key in (user.get("pages") or []):
-        return await call_next(request)
+        return _no_cache(path, await call_next(request))
 
     if is_api:
         return JSONResponse({"detail": "Доступ запрещён"}, status_code=403)
@@ -761,6 +782,61 @@ async def import_branch_balances(
 async def clear_branch_cash_balances():
     deleted = clear_branch_balances()
     return {"ok": True, "deleted": deleted, "balances_in_db": 0}
+
+
+@app.get("/api/cash-equipment", summary="Кассовая техника (kassa jihozlari)")
+async def get_cash_equipment(local_code: Optional[str] = Query(None, description="Локал код филиала")):
+    rows = list_cash_equipment(local_code)
+    return {"items": rows, "count": len(rows)}
+
+
+@app.get("/api/cash-equipment/branches", summary="Кассовая техника по филиалам (для карты)")
+async def get_cash_equipment_branches():
+    return cash_equipment_by_branch()
+
+
+@app.get("/api/cash-equipment/replacement", summary="План замены: износ и дата списания техники")
+async def get_cash_equipment_replacement(
+    kind: Optional[str] = Query("Mashinka", description="Лист Excel (вид техники); пусто — вся техника"),
+):
+    return equipment_replacement_plan(kind or None)
+
+
+@app.post("/api/cash-equipment/import", summary="Импорт списка кассовой техники (XLSX)")
+async def import_cash_equipment(
+    file: UploadFile = File(..., description="XLSX: локал код, бўлинма номи, асосий восита номи, инвентар рақами …"),
+):
+    if not file.filename or not file.filename.lower().endswith((".xlsx", ".xlsm")):
+        raise HTTPException(400, "Ожидается .xlsx файл")
+    tmp_dir = tempfile.mkdtemp(prefix="cash_eq_import_")
+    tmp_path = os.path.join(tmp_dir, file.filename)
+    try:
+        with open(tmp_path, "wb") as f:
+            shutil.copyfileobj(file.file, f)
+        try:
+            parsed = parse_cash_equipment_xlsx(tmp_path)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        stats = replace_cash_equipment(parsed["records"])
+        return {
+            "ok": True,
+            "filename": file.filename,
+            "by_sheet": parsed["by_sheet"],
+            "total_rows_in_file": parsed["total_rows"],
+            "imported": stats["saved"],
+            "matched_to_branches": stats["matched"],
+            "unmatched": stats["unmatched"],
+            "branches_matched": stats["branches_matched"],
+            "validation_errors": parsed["errors"][:50],
+            "validation_errors_count": len(parsed["errors"]),
+        }
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@app.post("/api/cash-equipment/clear", summary="Очистить кассовую технику")
+async def clear_cash_equipment_endpoint():
+    return {"ok": True, "deleted": clear_cash_equipment()}
 
 
 @app.post("/api/branches/import", summary="Импорт филиалов из XLSX")

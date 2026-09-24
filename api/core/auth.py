@@ -36,10 +36,12 @@ PAGE_DEFINITIONS: List[Dict[str, Any]] = [
             "/dashboard/incassation.html",
             "/dashboard/import-atms.html",
             "/dashboard/import-branches.html",
+            "/dashboard/import-cash-equipment.html",
+            "/dashboard/equipment-replacement.html",
         ],
         "api_prefixes": [
             "/api/atms", "/api/branches", "/api/routes", "/api/incassation", "/api/osrm",
-            "/api/alerts", "/api/baseline", "/api/atm-monitor",
+            "/api/alerts", "/api/baseline", "/api/atm-monitor", "/api/cash-equipment",
         ],
     },
     {

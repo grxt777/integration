@@ -5,7 +5,7 @@
 // - показывает, кто вошёл, и даёт выйти.
 (function () {
   const PAGE_DEFINITIONS = [
-    { key: 'atm_map', html: ['/dashboard/map.html', '/dashboard/incassation.html', '/dashboard/import-atms.html', '/dashboard/import-branches.html'] },
+    { key: 'atm_map', html: ['/dashboard/map.html', '/dashboard/incassation.html', '/dashboard/import-atms.html', '/dashboard/import-branches.html', '/dashboard/import-cash-equipment.html', '/dashboard/equipment-replacement.html'] },
     { key: 'atm_analytics', html: ['/dashboard/analytics.html'] },
     { key: 'treasury', html: ['/dashboard/branch-cash.html', '/dashboard/import-branch-balances.html', '/dashboard/import-sqb-rates.html'] },
     { key: 'hr_cashiers', html: ['/dashboard/cashiers.html', '/dashboard/cashier-detail.html', '/dashboard/import-cashiers.html'] },

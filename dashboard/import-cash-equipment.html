@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Импорт кассовой техники — XLSX</title>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #f6f8fb; --surface: #fff; --border: #e5eaf3; --text: #111827;
+      --muted: #667085; --primary: #d97706; --success: #16a34a; --danger: #dc2626;
+      --shadow-md: 0 12px 28px rgba(16, 24, 40, .08);
+    }
+    body {
+      font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+      background: radial-gradient(circle at top left, rgba(217, 119, 6, .12), transparent 30%), var(--bg);
+      min-height: 100vh; color: var(--text);
+    }
+    header {
+      height: 60px; padding: 0 24px; display: flex; align-items: center; gap: 14px;
+      background: rgba(255,255,255,.9); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 10;
+    }
+    h1 { font-size: 18px; font-weight: 850; }
+    .badge { background: linear-gradient(135deg, #d97706, #fbbf24); color: #fff; border-radius: 999px; padding: 4px 11px; font-size: 12px; font-weight: 800; }
+    .spacer { flex: 1; }
+    .nav-link {
+      display: inline-flex; align-items: center; gap: 7px; padding: 9px 12px; border-radius: 12px;
+      border: 1px solid var(--border); background: #fff; color: var(--muted); text-decoration: none; font-size: 13px; font-weight: 700;
+    }
+    .page { width: min(880px, calc(100vw - 32px)); margin: 32px auto 40px; }
+    .back-link { display: inline-flex; gap: 6px; font-size: 13px; font-weight: 700; color: var(--muted); text-decoration: none; margin-bottom: 16px; }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 18px; padding: 28px; box-shadow: var(--shadow-md); }
+    .card h2 { font-size: 16px; font-weight: 800; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+    .card p { color: var(--muted); font-size: 13px; line-height: 1.55; margin-bottom: 18px; }
+    .dropzone {
+      border: 2px dashed #fcd34d; border-radius: 14px; padding: 48px 20px; text-align: center;
+      cursor: pointer; background: #fffbeb; transition: .2s;
+    }
+    .dropzone:hover, .dropzone.drag-over { border-color: var(--primary); background: #fef3c7; }
+    .dropzone .label { font-size: 15px; font-weight: 700; margin: 10px 0 4px; }
+    .dropzone .hint { font-size: 12px; color: var(--muted); }
+    .dropzone .file { margin-top: 12px; font-weight: 700; color: var(--success); }
+    .actions { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
+    button {
+      border: 0; border-radius: 12px; padding: 11px 16px; font-weight: 800; font-size: 13px;
+      cursor: pointer; display: inline-flex; align-items: center; gap: 7px;
+    }
+    .btn-primary { background: var(--primary); color: #fff; }
+    .btn-primary:disabled { opacity: .45; cursor: not-allowed; }
+    .btn-ghost { background: #fff; border: 1px solid var(--border) !important; color: var(--muted); }
+    .btn-danger { background: #fff; border: 1px solid #fecaca !important; color: var(--danger); }
+    .btn-danger:hover { background: #fef2f2; }
+    .status-line { margin-top: 14px; font-size: 13px; color: var(--muted); }
+    .progress { display: none; margin-top: 16px; align-items: center; gap: 10px; color: var(--muted); font-size: 13px; }
+    .progress.show { display: flex; }
+    .spinner { width: 18px; height: 18px; border: 2px solid #fcd34d; border-top-color: var(--primary); border-radius: 50%; animation: spin .7s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .result { display: none; margin-top: 18px; }
+    .result.show { display: block; }
+    .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 10px; }
+    .stat { background: #f8fafc; border: 1px solid var(--border); border-radius: 12px; padding: 12px; text-align: center; }
+    .stat .v { font-size: 22px; font-weight: 850; }
+    .stat .l { font-size: 11px; color: var(--muted); margin-top: 2px; }
+    .info { margin-top: 18px; font-size: 12.5px; color: var(--muted); line-height: 1.55; background: #f8fafc; border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+    code { background: #fffbeb; padding: 1px 6px; border-radius: 6px; font-size: 12px; }
+  </style>
+</head>
+<body>
+<header>
+  <span class="badge">Техника</span>
+  <h1>Kassa jihozlari ro‘yxati</h1>
+  <span class="spacer"></span>
+  <a class="nav-link" href="/dashboard/import.html">Импорт</a>
+  <a class="nav-link" href="/dashboard/map.html">Карта</a>
+</header>
+
+<div class="page">
+  <a class="back-link" href="/dashboard/import.html">← Назад</a>
+  <div class="card">
+    <h2><i data-lucide="calculator" style="width:18px;height:18px"></i> Kassa jihozlari ro‘yxati</h2>
+    <p>
+      Excel «Kassa jihozlari ro‘yxati» — читаются <b>все листы</b>: Mashinka (главное), Detektor, Termo printer, Multivak, Kassa aravasi, Plesos.
+      Привязка к филиалу — по <code>Таркибий бўлинма номи</code> (название филиала).
+      Каждая загрузка <b>заменяет</b> предыдущий список; реестр филиалов не меняется.
+    </p>
+
+    <div class="dropzone" id="dropzone">
+      <i data-lucide="upload-cloud" style="width:48px;height:48px;color:#d97706"></i>
+      <div class="label">Перетащите XLSX или выберите файл</div>
+      <div class="hint">Локал код · Бўлинма номи · Асосий восита номи · Инвентар рақами · саналар · қийматлар</div>
+      <div class="file" id="fileName" style="display:none"></div>
+      <input type="file" id="fileInput" accept=".xlsx,.xlsm" style="display:none" />
+    </div>
+
+    <div class="actions">
+      <button class="btn-primary" id="uploadBtn" disabled>
+        <i data-lucide="play" style="width:16px;height:16px"></i> Загрузить
+      </button>
+      <button class="btn-ghost" id="resetBtn">Сбросить файл</button>
+      <button class="btn-danger" id="clearDbBtn" type="button">
+        <i data-lucide="trash-2" style="width:16px;height:16px"></i> Очистить технику в БД
+      </button>
+    </div>
+    <div class="status-line" id="dbStatus">В базе сейчас: загрузка…</div>
+
+    <div class="progress" id="progress"><div class="spinner"></div><span>Загружаю…</span></div>
+
+    <div class="result" id="result">
+      <div class="summary">
+        <div class="stat"><div class="v" id="rImported">0</div><div class="l">Импортировано</div></div>
+        <div class="stat"><div class="v" id="rMatched">0</div><div class="l">Привязано к филиалам</div></div>
+        <div class="stat"><div class="v" id="rBranches">0</div><div class="l">Филиалов с техникой</div></div>
+        <div class="stat"><div class="v" id="rUnmatched">0</div><div class="l">Без привязки</div></div>
+        <div class="stat"><div class="v" id="rErrors">0</div><div class="l">Ошибок</div></div>
+      </div>
+      <div id="rNote" style="margin-top:12px;font-size:13px;color:var(--muted)"></div>
+    </div>
+
+    <div class="info">
+      <b>Ожидаемые колонки:</b>
+      <code>№</code>, <code>Таркибий бўлинма коди (локал код)</code>, <code>Таркибий бўлинма номи</code>,
+      <code>Асосий восита номи</code>, <code>Асосий воситанинг инвентар рақами</code>,
+      <code>Асосий воситанинг тоифа рақами</code>, <code>Балансга олинган санаси</code>,
+      <code>Фойдаланишга топширилган санаси</code>, <code>Баланс бўйича тиклаш қиймати</code>,
+      <code>Қолдиқ суммаси</code>.<br><br>
+      На карте: включите слой филиалов → клик по филиалу → блок «Машинки» в панели филиала.
+    </div>
+  </div>
+</div>
+
+<script>
+  lucide.createIcons();
+  const API = location.origin;
+  const dropzone = document.getElementById('dropzone');
+  const fileInput = document.getElementById('fileInput');
+  const fileName = document.getElementById('fileName');
+  const uploadBtn = document.getElementById('uploadBtn');
+  let selectedFile = null;
+
+  dropzone.addEventListener('click', () => fileInput.click());
+  ['dragover','dragenter'].forEach(e => dropzone.addEventListener(e, ev => { ev.preventDefault(); dropzone.classList.add('drag-over'); }));
+  ['dragleave','drop'].forEach(e => dropzone.addEventListener(e, ev => { ev.preventDefault(); dropzone.classList.remove('drag-over'); }));
+  dropzone.addEventListener('drop', ev => { if (ev.dataTransfer.files[0]) pick(ev.dataTransfer.files[0]); });
+  fileInput.addEventListener('change', () => { if (fileInput.files[0]) pick(fileInput.files[0]); });
+
+  function pick(f) {
+    selectedFile = f;
+    fileName.style.display = 'block';
+    fileName.textContent = f.name + ' · ' + Math.round(f.size/1024) + ' КБ';
+    uploadBtn.disabled = false;
+  }
+
+  async function refreshDbStatus() {
+    const el = document.getElementById('dbStatus');
+    try {
+      const r = await fetch(API + '/api/cash-equipment');
+      const d = await r.json();
+      const n = d.count ?? 0;
+      el.textContent = n
+        ? `В базе сейчас: ${n} единиц техники.`
+        : 'В базе сейчас: техники нет — загрузите Excel.';
+    } catch (_) {
+      el.textContent = 'В базе сейчас: не удалось проверить.';
+    }
+  }
+  refreshDbStatus();
+
+  document.getElementById('resetBtn').onclick = () => {
+    selectedFile = null; fileInput.value = '';
+    fileName.style.display = 'none'; uploadBtn.disabled = true;
+    document.getElementById('result').classList.remove('show');
+  };
+
+  document.getElementById('clearDbBtn').onclick = async () => {
+    if (!confirm('Удалить весь список кассовой техники? Реестр филиалов не трогается.')) return;
+    try {
+      const res = await fetch(API + '/api/cash-equipment/clear', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Ошибка очистки');
+      alert('Удалено строк: ' + (data.deleted ?? 0));
+      document.getElementById('result').classList.remove('show');
+      await refreshDbStatus();
+    } catch (e) {
+      alert(e.message || e);
+    }
+  };
+
+  uploadBtn.onclick = async () => {
+    if (!selectedFile) return;
+    const progress = document.getElementById('progress');
+    const result = document.getElementById('result');
+    progress.classList.add('show'); result.classList.remove('show'); uploadBtn.disabled = true;
+    try {
+      const fd = new FormData();
+      fd.append('file', selectedFile);
+      const res = await fetch(API + '/api/cash-equipment/import', { method: 'POST', body: fd });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || data.message || 'Ошибка импорта');
+      document.getElementById('rImported').textContent = data.imported ?? 0;
+      document.getElementById('rMatched').textContent = data.matched_to_branches ?? 0;
+      document.getElementById('rUnmatched').textContent = data.unmatched ?? 0;
+      document.getElementById('rErrors').textContent = data.validation_errors_count ?? 0;
+      document.getElementById('rBranches').textContent = data.branches_matched ?? 0;
+      const errs = (data.validation_errors || []).slice(0, 5).map(e => `стр. ${e.row}: ${e.error}`).join('; ');
+      const sheets = Object.entries(data.by_sheet || {}).map(([k, v]) => `${k}: ${v}`).join(', ');
+      document.getElementById('rNote').textContent =
+        (sheets ? 'Листы — ' + sheets + '. ' : '') + 'Откройте карту и кликните по филиалу.' + (errs ? ' Ошибки: ' + errs : '');
+      result.classList.add('show');
+      await refreshDbStatus();
+    } catch (e) {
+      alert(e.message || e);
+    } finally {
+      progress.classList.remove('show');
+      uploadBtn.disabled = !selectedFile;
+    }
+  };
+</script>
+<script src="/dashboard/js/auth-nav.js"></script>
+</body>
+</html>

@@ -33,6 +33,7 @@
   <nav class="top-nav">
     <a href="/dashboard/index.html"><i data-lucide="home" class="icon-inline"></i> Главная</a>
     <a href="/dashboard/branch-cash.html"><i data-lucide="wallet" class="icon-inline"></i> Касса филиалов</a>
+    <a href="/dashboard/equipment-replacement.html"><i data-lucide="wrench" class="icon-inline"></i> Замена машинок</a>
     <a href="/dashboard/analytics.html"><i data-lucide="bar-chart-3" class="icon-inline"></i> Аналитика ATM</a>
     <a href="/dashboard/import.html"><i data-lucide="file-spreadsheet" class="icon-inline"></i> Импорт реестра</a>
     <a href="/dashboard/cashiers.html"><i data-lucide="users-round" class="icon-inline"></i> Кассиры</a>
@@ -255,7 +256,13 @@
         <span id="modal-atm-count-val">0</span>
       </div>
       
-      <div class="modal-atm-list-title">Список банкоматов в регионе:</div>
+      <div class="modal-atm-list-title" style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+        <span>Список банкоматов в регионе:</span>
+        <button type="button" id="modal-select-all-btn" onclick="toggleAllModalAtms()"
+          style="border:1px solid var(--border);background:#fff;color:var(--primary);border-radius:8px;padding:4px 10px;font-size:11px;font-weight:800;cursor:pointer;text-transform:none;letter-spacing:0">
+          Выбрать все
+        </button>
+      </div>
       <div class="modal-atm-list" id="modal-atm-list">
         <!-- ATMs list will be populated here -->
       </div>
@@ -267,7 +274,7 @@
   </div>
 </div>
 
-<script src="/dashboard/js/map-app.js?v=live2"></script>
+<script src="/dashboard/js/map-app.js?v=zoom4"></script>
 <script src="/dashboard/js/auth-nav.js"></script>
 </body>
 </html>
